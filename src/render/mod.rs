@@ -9,5 +9,7 @@ mod pipeline;
 mod framebuffers;
 mod commands;
 mod sync;
+mod vertex;
+mod buffer;
 
 pub use renderer::Renderer;

@@ -5,6 +5,7 @@ use vulkanalia::{
 };
 
 use super::renderer::RendererData;
+use super::vertex::Vertex;
 
 #[derive(Default)]
 pub struct Pipeline {
@@ -31,7 +32,11 @@ impl Pipeline {
             .module(frag_shader_module)
             .name(b"main\0");
 
-        let vertex_input_state = vk::PipelineVertexInputStateCreateInfo::builder();
+        let binding_descriptions = &[Vertex::binding_description()];
+        let attribute_descriptions = Vertex::attribute_descriptions();
+        let vertex_input_state = vk::PipelineVertexInputStateCreateInfo::builder()
+            .vertex_binding_descriptions(binding_descriptions)
+            .vertex_attribute_descriptions(&attribute_descriptions);
 
         let input_assembly_state = vk::PipelineInputAssemblyStateCreateInfo::builder()
             .topology(vk::PrimitiveTopology::TRIANGLE_LIST)

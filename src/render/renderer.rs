@@ -1,3 +1,5 @@
+use std::mem::size_of;
+
 use anyhow::{anyhow, Result};
 use vulkanalia::{
     self,
@@ -5,6 +7,7 @@ use vulkanalia::{
     Device, Entry, Instance,
 };
 use winit::window::Window;
+use nalgebra_glm as glm;
 
 use crate::config::MAX_FRAMES_IN_FLIGHT;
 
@@ -15,7 +18,7 @@ use super::{
     instance, physical_device,
     pipeline::Pipeline,
     swapchain::Swapchain,
-    sync,
+    sync, buffer::Buffer, vertex::Vertex,
 };
 
 pub struct Renderer {
@@ -45,6 +48,15 @@ impl Renderer {
             .allocate_command_buffers(&device, data.swapchain.images.len() as u32)?;
 
         create_sync_objects(&device, &mut data)?;
+
+        data.vertex_buffer = Buffer::create(&instance, &device, &data, 3 * size_of::<Vertex>(), vk::BufferUsageFlags::VERTEX_BUFFER)?;
+        let vertices = vec![
+            Vertex::new(glm::vec3(0.0, -0.5, 0.0), glm::vec3(1.0, 1.0, 1.0)),
+            Vertex::new(glm::vec3(0.5, 0.5, 0.0), glm::vec3(0.0, 1.0, 0.0)),
+            Vertex::new(glm::vec3(-0.5, 0.5, 0.0), glm::vec3(0.0, 0.0, 1.0)),
+        ];
+    
+        data.vertex_buffer.fill(&device, vertices.align_to::<u8>().1)?;
 
         Ok(Self {
             instance,
@@ -85,6 +97,12 @@ impl Renderer {
                 command_buffer.buffer,
                 vk::PipelineBindPoint::GRAPHICS,
                 self.data.pipeline.pipeline,
+            );
+            self.device.cmd_bind_vertex_buffers(
+                command_buffer.buffer,
+                0,
+                &[self.data.vertex_buffer.buffer],
+                &[0],
             );
             self.device.cmd_draw(command_buffer.buffer, 3, 1, 0, 0);
             self.device.cmd_end_render_pass(command_buffer.buffer);
@@ -211,6 +229,8 @@ impl Drop for Renderer {
             self.device.device_wait_idle().unwrap();
             self.destroy_swapchain().unwrap();
 
+            self.data.vertex_buffer.destroy(&self.device);
+
             self.data
                 .image_available_semaphore
                 .iter()
@@ -248,6 +268,7 @@ pub struct RendererData {
     pub render_finished_semaphore: Vec<vk::Semaphore>,
     pub in_flight_fences: Vec<vk::Fence>,
     pub images_in_flight: Vec<vk::Fence>,
+    pub vertex_buffer: Buffer
 }
 
 unsafe fn create_sync_objects(device: &Device, data: &mut RendererData) -> Result<()> {
