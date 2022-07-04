@@ -11,5 +11,6 @@ mod commands;
 mod sync;
 mod vertex;
 mod buffer;
+mod uniforms;
 
 pub use renderer::Renderer;

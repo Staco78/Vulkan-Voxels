@@ -66,7 +66,7 @@ impl Pipeline {
             .polygon_mode(vk::PolygonMode::FILL)
             .line_width(1.0)
             .cull_mode(vk::CullModeFlags::BACK)
-            .front_face(vk::FrontFace::CLOCKWISE)
+            .front_face(vk::FrontFace::COUNTER_CLOCKWISE)
             .depth_bias_enable(false);
 
         let multisample_state = vk::PipelineMultisampleStateCreateInfo::builder()
@@ -84,7 +84,8 @@ impl Pipeline {
             .attachments(attachments)
             .blend_constants([0.0, 0.0, 0.0, 0.0]);
 
-        let layout_info = vk::PipelineLayoutCreateInfo::builder();
+        let set_layouts = &[data.uniforms.descriptor_set_layout];
+        let layout_info = vk::PipelineLayoutCreateInfo::builder().set_layouts(set_layouts);
         let layout = device.create_pipeline_layout(&layout_info, None)?;
 
         let render_pass = create_render_pass(device, &data)?;

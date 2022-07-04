@@ -1,25 +1,36 @@
-use std::mem::size_of;
+use std::{mem::size_of, time::Instant};
 
 use anyhow::{anyhow, Result};
+use nalgebra_glm as glm;
 use vulkanalia::{
     self,
     vk::{self, DeviceV1_0, Handle, HasBuilder, KhrSurfaceExtension, KhrSwapchainExtension},
     Device, Entry, Instance,
 };
 use winit::window::Window;
-use nalgebra_glm as glm;
 
 use crate::config::MAX_FRAMES_IN_FLIGHT;
 
 use super::{
+    buffer::Buffer,
     commands::{CommandBuffer, CommandPool},
     device,
     framebuffers::Framebuffers,
     instance, physical_device,
     pipeline::Pipeline,
     swapchain::Swapchain,
-    sync, buffer::Buffer, vertex::Vertex,
+    sync,
+    uniforms::Uniforms,
+    vertex::Vertex,
 };
+
+#[repr(C)]
+#[derive(Default)]
+pub struct UniformBufferObject {
+    model: glm::Mat4,
+    view: glm::Mat4,
+    proj: glm::Mat4,
+}
 
 pub struct Renderer {
     instance: Instance,
@@ -27,6 +38,8 @@ pub struct Renderer {
     data: RendererData,
     frame: usize,
     pub resized: bool,
+
+    start: Instant,
 }
 
 impl Renderer {
@@ -40,6 +53,7 @@ impl Renderer {
         let device = device::create(&instance, &mut data)?;
 
         data.swapchain = Swapchain::create(window, &instance, &device, &mut data)?;
+        data.uniforms = Uniforms::create(&instance, &device, &data)?;
         data.pipeline = Pipeline::create(&device, &data)?;
         data.framebuffers = Framebuffers::create(&device, &data)?;
         data.command_pool = CommandPool::create(&instance, &device, &data)?;
@@ -49,14 +63,20 @@ impl Renderer {
 
         create_sync_objects(&device, &mut data)?;
 
-        data.vertex_buffer = Buffer::create(&instance, &device, &data, 3 * size_of::<Vertex>(), vk::BufferUsageFlags::VERTEX_BUFFER)?;
-        let vertices = vec![
+        data.vertex_buffer = Buffer::create(
+            &instance,
+            &device,
+            &data,
+            3 * size_of::<Vertex>(),
+            vk::BufferUsageFlags::VERTEX_BUFFER,
+        )?;
+        let vertices = [
             Vertex::new(glm::vec3(0.0, -0.5, 0.0), glm::vec3(1.0, 1.0, 1.0)),
             Vertex::new(glm::vec3(0.5, 0.5, 0.0), glm::vec3(0.0, 1.0, 0.0)),
             Vertex::new(glm::vec3(-0.5, 0.5, 0.0), glm::vec3(0.0, 0.0, 1.0)),
         ];
-    
-        data.vertex_buffer.fill(&device, vertices.align_to::<u8>().1)?;
+
+        data.vertex_buffer.fill(&device, [vertices].as_ptr())?;
 
         Ok(Self {
             instance,
@@ -64,6 +84,7 @@ impl Renderer {
             data,
             frame: 0,
             resized: false,
+            start: Instant::now(),
         })
     }
 
@@ -104,11 +125,46 @@ impl Renderer {
                 &[self.data.vertex_buffer.buffer],
                 &[0],
             );
+            self.device.cmd_bind_descriptor_sets(
+                command_buffer.buffer,
+                vk::PipelineBindPoint::GRAPHICS,
+                self.data.pipeline.layout,
+                0,
+                &[self.data.uniforms.descriptor_sets[i]],
+                &[],
+            );
             self.device.cmd_draw(command_buffer.buffer, 3, 1, 0, 0);
             self.device.cmd_end_render_pass(command_buffer.buffer);
 
             command_buffer.end(&self.device)?;
         }
+        Ok(())
+    }
+
+    unsafe fn update_camera(&mut self, image_index: usize) -> Result<()> {
+        let time = self.start.elapsed().as_secs_f32();
+
+        let model = glm::rotate(
+            &glm::identity(),
+            time * glm::radians(&glm::vec1(90.0))[0],
+            &glm::vec3(0.0, 0.0, 1.0),
+        );
+        let view = glm::look_at(
+            &glm::vec3(2.0, 2.0, 2.0),
+            &glm::vec3(0.0, 0.0, 0.0),
+            &glm::vec3(0.0, 0.0, 1.0),
+        );
+        let mut proj = glm::perspective(
+            self.data.swapchain.extent.width as f32 / self.data.swapchain.extent.height as f32,
+            glm::radians(&glm::vec1(45.0))[0],
+            0.1,
+            10.0,
+        );
+        proj[(1, 1)] *= -1.0;
+        let ubo = UniformBufferObject { model, view, proj };
+
+        self.data.uniforms.update(&self.device, image_index, &ubo)?;
+
         Ok(())
     }
 
@@ -141,6 +197,8 @@ impl Renderer {
         }
 
         self.data.images_in_flight[image_index as usize] = self.data.in_flight_fences[self.frame];
+
+        self.update_camera(image_index)?;
 
         let wait_semaphores = &[self.data.image_available_semaphore[self.frame]];
         let wait_stages = &[vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
@@ -188,6 +246,8 @@ impl Renderer {
     }
 
     pub unsafe fn destroy_swapchain(&mut self) -> Result<()> {
+        self.data.uniforms.destroy(&self.device);
+
         self.data.framebuffers.destroy(&self.device);
         self.device.free_command_buffers(
             self.data.command_pool.pool,
@@ -207,6 +267,7 @@ impl Renderer {
         self.device.device_wait_idle()?;
         self.destroy_swapchain()?;
 
+        self.data.uniforms = Uniforms::create(&self.instance, &self.device, &self.data)?;
         self.data.swapchain =
             Swapchain::create(window, &self.instance, &self.device, &mut self.data)?;
         self.data.pipeline = Pipeline::create(&self.device, &self.data)?;
@@ -268,7 +329,8 @@ pub struct RendererData {
     pub render_finished_semaphore: Vec<vk::Semaphore>,
     pub in_flight_fences: Vec<vk::Fence>,
     pub images_in_flight: Vec<vk::Fence>,
-    pub vertex_buffer: Buffer
+    pub vertex_buffer: Buffer,
+    pub uniforms: Uniforms<UniformBufferObject>,
 }
 
 unsafe fn create_sync_objects(device: &Device, data: &mut RendererData) -> Result<()> {
