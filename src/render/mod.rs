@@ -14,5 +14,6 @@ mod buffer;
 mod uniforms;
 mod depth;
 mod memory;
+mod camera;
 
 pub use renderer::Renderer;

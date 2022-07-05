@@ -1,8 +1,12 @@
 mod app;
 mod config;
+mod inputs;
 mod render;
 
+use std::time::Instant;
+
 use app::App;
+use log::warn;
 use vulkanalia::{
     loader::{LibloadingLoader, LIBRARY},
     Entry,
@@ -10,7 +14,7 @@ use vulkanalia::{
 use winit::{
     dpi::LogicalSize,
     event::Event,
-    event::WindowEvent,
+    event::{DeviceEvent, WindowEvent},
     event_loop::{ControlFlow, EventLoop},
     window::WindowBuilder,
 };
@@ -30,11 +34,42 @@ fn main() {
 
     let mut app = App::create(&window, &entry).unwrap();
 
+    window.set_cursor_grab(true).unwrap();
+    window.set_cursor_visible(false);
+    let mut last_frame_time = Instant::now();
+
     event_loop.run(move |event, _, control_flow| {
         *control_flow = ControlFlow::Poll;
 
         match event {
-            Event::MainEventsCleared => app.render(&window).unwrap(),
+            Event::WindowEvent {
+                event: WindowEvent::KeyboardInput { input, .. },
+                ..
+            } => {
+                if let Some(key) = input.virtual_keycode {
+                    if input.state == winit::event::ElementState::Pressed {
+                        app.inputs.key_pressed(key);
+                    } else {
+                        app.inputs.key_released(key);
+                    }
+                } else {
+                    warn!("Unknown key pressed: {:?}", input);
+                }
+            }
+            Event::DeviceEvent {
+                event: DeviceEvent::MouseMotion { delta },
+                ..
+            } => {
+                app.inputs.mouse_moved(delta);
+            }
+            Event::MainEventsCleared => {
+                let dt = last_frame_time.elapsed().as_secs_f32();
+                last_frame_time = Instant::now();
+
+                app.update(dt).unwrap();
+                app.render(&window, dt).unwrap();
+                app.inputs.reset();
+            }
             Event::WindowEvent {
                 event: WindowEvent::CloseRequested,
                 ..

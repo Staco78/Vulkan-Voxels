@@ -1,4 +1,4 @@
-use std::{mem::size_of, time::Instant};
+use std::mem::size_of;
 
 use anyhow::{anyhow, Result};
 use nalgebra_glm as glm;
@@ -9,10 +9,11 @@ use vulkanalia::{
 };
 use winit::window::Window;
 
-use crate::config::MAX_FRAMES_IN_FLIGHT;
+use crate::{config::MAX_FRAMES_IN_FLIGHT, inputs::Inputs};
 
 use super::{
     buffer::Buffer,
+    camera::Camera,
     commands::{CommandBuffer, CommandPool},
     depth::DepthBuffer,
     device,
@@ -28,9 +29,9 @@ use super::{
 #[repr(C)]
 #[derive(Default)]
 pub struct UniformBufferObject {
-    model: glm::Mat4,
-    view: glm::Mat4,
-    proj: glm::Mat4,
+    pub model: glm::Mat4,
+    pub view: glm::Mat4,
+    pub proj: glm::Mat4,
 }
 
 pub struct Renderer {
@@ -39,8 +40,7 @@ pub struct Renderer {
     data: RendererData,
     frame: usize,
     pub resized: bool,
-
-    start: Instant,
+    camera: Camera,
 }
 
 impl Renderer {
@@ -90,13 +90,15 @@ impl Renderer {
 
         data.vertex_buffer.fill(&device, [vertices].as_ptr())?;
 
+        let camera = Camera::new(&device, &mut data)?;
+
         Ok(Self {
             instance,
             device,
             data,
             frame: 0,
             resized: false,
-            start: Instant::now(),
+            camera,
         })
     }
 
@@ -160,34 +162,12 @@ impl Renderer {
         Ok(())
     }
 
-    unsafe fn update_camera(&mut self, image_index: usize) -> Result<()> {
-        let time = self.start.elapsed().as_secs_f32();
-
-        let model = glm::rotate(
-            &glm::identity(),
-            time * glm::radians(&glm::vec1(90.0))[0],
-            &glm::vec3(0.0, 0.0, 1.0),
-        );
-        let view = glm::look_at(
-            &glm::vec3(2.0, 2.0, 2.0),
-            &glm::vec3(0.0, 0.0, 0.0),
-            &glm::vec3(0.0, 0.0, 1.0),
-        );
-        let mut proj = glm::perspective_rh_zo(
-            self.data.swapchain.extent.width as f32 / self.data.swapchain.extent.height as f32,
-            glm::radians(&glm::vec1(45.0))[0],
-            0.1,
-            10.0,
-        );
-        proj[(1, 1)] *= -1.0;
-        let ubo = UniformBufferObject { model, view, proj };
-
-        self.data.uniforms.update(&self.device, image_index, &ubo)?;
-
+    pub unsafe fn update(&mut self, inputs: &Inputs, dt: f32) -> Result<()> {
+        self.camera.update(inputs, dt);
         Ok(())
     }
 
-    pub unsafe fn render(&mut self, window: &Window) -> Result<()> {
+    pub unsafe fn render(&mut self, window: &Window, _dt: f32) -> Result<()> {
         self.device.wait_for_fences(
             &[self.data.in_flight_fences[self.frame]],
             true,
@@ -217,7 +197,8 @@ impl Renderer {
 
         self.data.images_in_flight[image_index as usize] = self.data.in_flight_fences[self.frame];
 
-        self.update_camera(image_index)?;
+        self.camera
+            .send(&self.device, &mut self.data, image_index)?;
 
         let wait_semaphores = &[self.data.image_available_semaphore[self.frame]];
         let wait_stages = &[vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
@@ -287,10 +268,10 @@ impl Renderer {
         self.device.device_wait_idle()?;
         self.destroy_swapchain()?;
 
-        self.data.depth_buffer = DepthBuffer::create(&self.instance, &self.device, &self.data)?;
         self.data.uniforms = Uniforms::create(&self.instance, &self.device, &self.data)?;
         self.data.swapchain =
             Swapchain::create(window, &self.instance, &self.device, &mut self.data)?;
+        self.data.depth_buffer = DepthBuffer::create(&self.instance, &self.device, &self.data)?;
         self.data.pipeline = Pipeline::create(&self.instance, &self.device, &self.data)?;
         self.data.framebuffers = Framebuffers::create(&self.device, &self.data)?;
         self.data.command_buffers = self
@@ -301,6 +282,8 @@ impl Renderer {
             .images_in_flight
             .resize(self.data.swapchain.images.len(), vk::Fence::null());
         self.record_commands()?;
+        self.camera.update_projection(&self.data);
+        self.camera.send_all(&self.device, &mut self.data)?;
         Ok(())
     }
 }

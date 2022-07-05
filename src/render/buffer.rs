@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use vulkanalia::{
     vk::{self, DeviceV1_0, HasBuilder},
     Device, Instance,
@@ -12,6 +12,7 @@ use std::ptr::copy_nonoverlapping;
 pub struct Buffer {
     pub buffer: vk::Buffer,
     pub memory: vk::DeviceMemory,
+    current_map_ranges: Option<[vk::MappedMemoryRangeBuilder; 1]>,
 }
 
 impl Buffer {
@@ -42,26 +43,46 @@ impl Buffer {
 
         device.bind_buffer_memory(buffer, memory, 0)?;
 
-        Ok(Self { buffer, memory })
+        Ok(Self {
+            buffer,
+            memory,
+            current_map_ranges: None,
+        })
     }
 
     pub unsafe fn fill<T>(&mut self, device: &Device, data: *const T) -> Result<()> {
-        let memory = device.map_memory(
-            self.memory,
-            0,
-            vk::WHOLE_SIZE as u64,
-            vk::MemoryMapFlags::empty(),
-        )?;
+        let memory = self.map::<T>(device, 0, vk::WHOLE_SIZE as u64)?;
 
         copy_nonoverlapping(data, memory.cast(), 1);
 
-        let memory_ranges = &[vk::MappedMemoryRange::builder()
+        self.unmap(device)?;
+
+        Ok(())
+    }
+
+    pub unsafe fn map<T>(&mut self, device: &Device, offset: u64, size: u64) -> Result<*mut T> {
+        assert!(self.current_map_ranges.is_none());
+
+        let memory = device.map_memory(self.memory, offset, size, vk::MemoryMapFlags::empty())?;
+
+        self.current_map_ranges = Some([vk::MappedMemoryRange::builder()
             .memory(self.memory)
-            .offset(0)
-            .size(vk::WHOLE_SIZE as u64)];
-        device.flush_mapped_memory_ranges(memory_ranges)?;
+            .offset(offset)
+            .size(size)]);
+
+        Ok(memory.cast())
+    }
+
+    pub unsafe fn unmap(&mut self, device: &Device) -> Result<()> {
+        device.flush_mapped_memory_ranges(
+            &self
+                .current_map_ranges
+                .ok_or(anyhow!("Buffer not mapped"))?,
+        )?;
 
         device.unmap_memory(self.memory);
+
+        self.current_map_ranges = None;
 
         Ok(())
     }

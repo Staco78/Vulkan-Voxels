@@ -96,11 +96,6 @@ impl<T> Uniforms<T> {
         })
     }
 
-    pub unsafe fn update(&mut self, device: &Device, image_index: usize, data: &T) -> Result<()> {
-        self.buffers[image_index].fill(device, data)?;
-        Ok(())
-    }
-
     pub unsafe fn destroy(&self, device: &Device) {
         self.buffers
             .iter()
