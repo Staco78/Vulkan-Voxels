@@ -26,18 +26,14 @@ pub struct Camera {
 impl Camera {
     pub unsafe fn new(device: &Device, data: &mut RendererData) -> Result<Camera> {
         let mut cam = Camera {
-            model: glm::rotate(
-                &glm::identity(),
-                glm::radians(&glm::vec1(90.0))[0],
-                &glm::vec3(0.0, 0.0, 1.0),
-            ),
+            model: glm::identity(),
             view: Mat4::default(),
             proj: Mat4::default(),
-            pos: vec3(-4., 0., 0.5),
+            pos: vec3(-20.0, 0.0, 0.0),
             fov: 45.0,
             near: 0.1,
             far: 1000.0,
-            yaw: -10.0,
+            yaw: 0.0,
             pitch: 0.0,
         };
 
@@ -57,7 +53,7 @@ impl Camera {
         };
 
         data.uniforms.buffers.iter_mut().for_each(|b| {
-            b.fill(device, &ubo).unwrap();
+            b.fill(device, &ubo, 1).unwrap();
         });
 
         Ok(())

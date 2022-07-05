@@ -6,7 +6,7 @@ use vulkanalia::{
 
 use super::{memory::get_memory_type_index, renderer::RendererData};
 
-use std::ptr::copy_nonoverlapping;
+use std::{mem::size_of, ptr::copy_nonoverlapping};
 
 #[derive(Default)]
 pub struct Buffer {
@@ -50,10 +50,10 @@ impl Buffer {
         })
     }
 
-    pub unsafe fn fill<T>(&mut self, device: &Device, data: *const T) -> Result<()> {
-        let memory = self.map::<T>(device, 0, vk::WHOLE_SIZE as u64)?;
+    pub unsafe fn fill<T>(&mut self, device: &Device, data: *const T, count: usize) -> Result<()> {
+        let memory = self.map::<T>(device, 0, (size_of::<T>() * count) as u64)?;
 
-        copy_nonoverlapping(data, memory.cast(), 1);
+        copy_nonoverlapping(data, memory.cast(), count);
 
         self.unmap(device)?;
 

@@ -7,3 +7,5 @@ pub const VALIDATION_LAYER: vk::ExtensionName =
 pub const DEVICE_EXTENSIONS: &[vk::ExtensionName] = &[vk::KHR_SWAPCHAIN_EXTENSION.name];
 
 pub const MAX_FRAMES_IN_FLIGHT: usize = 30;
+
+pub const CHUNK_SIZE: usize = 16;

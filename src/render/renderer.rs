@@ -1,5 +1,3 @@
-use std::mem::size_of;
-
 use anyhow::{anyhow, Result};
 use nalgebra_glm as glm;
 use vulkanalia::{
@@ -9,10 +7,13 @@ use vulkanalia::{
 };
 use winit::window::Window;
 
-use crate::{config::MAX_FRAMES_IN_FLIGHT, inputs::Inputs};
+use crate::{
+    config::MAX_FRAMES_IN_FLIGHT,
+    inputs::Inputs,
+    world::{Chunk, ChunkPos},
+};
 
 use super::{
-    buffer::Buffer,
     camera::Camera,
     commands::{CommandBuffer, CommandPool},
     depth::DepthBuffer,
@@ -23,7 +24,6 @@ use super::{
     swapchain::Swapchain,
     sync,
     uniforms::Uniforms,
-    vertex::Vertex,
 };
 
 #[repr(C)]
@@ -65,30 +65,9 @@ impl Renderer {
 
         create_sync_objects(&device, &mut data)?;
 
-        data.vertex_buffer = Buffer::create(
-            &instance,
-            &device,
-            &data,
-            36 * size_of::<Vertex>(),
-            vk::BufferUsageFlags::VERTEX_BUFFER,
-        )?;
-
-        let vertices = [
-            Vertex::new(glm::vec3(-0.5, -0.5, 0.0), glm::vec3(1.0, 0.0, 0.0)),
-            Vertex::new(glm::vec3(0.5, -0.5, 0.0), glm::vec3(0.0, 1.0, 0.0)),
-            Vertex::new(glm::vec3(0.5, 0.5, 0.0), glm::vec3(0.0, 0.0, 1.0)),
-            Vertex::new(glm::vec3(0.5, 0.5, 0.0), glm::vec3(0.0, 0.0, 1.0)),
-            Vertex::new(glm::vec3(-0.5, 0.5, 0.0), glm::vec3(1.0, 1.0, 1.0)),
-            Vertex::new(glm::vec3(-0.5, -0.5, 0.0), glm::vec3(1.0, 0.0, 0.0)),
-            Vertex::new(glm::vec3(-0.5, -0.5, -0.5), glm::vec3(1.0, 0.0, 0.0)),
-            Vertex::new(glm::vec3(0.5, -0.5, -0.5), glm::vec3(0.0, 1.0, 0.0)),
-            Vertex::new(glm::vec3(0.5, 0.5, -0.5), glm::vec3(0.0, 0.0, 1.0)),
-            Vertex::new(glm::vec3(0.5, 0.5, -0.5), glm::vec3(0.0, 0.0, 1.0)),
-            Vertex::new(glm::vec3(-0.5, 0.5, -0.5), glm::vec3(1.0, 1.0, 1.0)),
-            Vertex::new(glm::vec3(-0.5, -0.5, -0.5), glm::vec3(1.0, 0.0, 0.0)),
-        ];
-
-        data.vertex_buffer.fill(&device, [vertices].as_ptr())?;
+        let mut chunk = Chunk::new(ChunkPos { x: 0, y: 0, z: 0 })?;
+        chunk.mesh(&instance, &device, &data)?;
+        data.chunks.push(chunk);
 
         let camera = Camera::new(&device, &mut data)?;
 
@@ -140,12 +119,7 @@ impl Renderer {
                 vk::PipelineBindPoint::GRAPHICS,
                 self.data.pipeline.pipeline,
             );
-            self.device.cmd_bind_vertex_buffers(
-                command_buffer.buffer,
-                0,
-                &[self.data.vertex_buffer.buffer],
-                &[0],
-            );
+
             self.device.cmd_bind_descriptor_sets(
                 command_buffer.buffer,
                 vk::PipelineBindPoint::GRAPHICS,
@@ -154,7 +128,19 @@ impl Renderer {
                 &[self.data.uniforms.descriptor_sets[i]],
                 &[],
             );
-            self.device.cmd_draw(command_buffer.buffer, 36, 1, 0, 0);
+
+            for chunk in self.data.chunks.iter_mut() {
+                self.device.cmd_bind_vertex_buffers(
+                    command_buffer.buffer,
+                    0,
+                    &[chunk.vertex_buffer.buffer],
+                    &[0],
+                );
+
+                self.device
+                    .cmd_draw(command_buffer.buffer, chunk.vertices_size as u32, 1, 0, 0);
+            }
+
             self.device.cmd_end_render_pass(command_buffer.buffer);
 
             command_buffer.end(&self.device)?;
@@ -294,7 +280,10 @@ impl Drop for Renderer {
             self.device.device_wait_idle().unwrap();
             self.destroy_swapchain().unwrap();
 
-            self.data.vertex_buffer.destroy(&self.device);
+            self.data
+                .chunks
+                .iter()
+                .for_each(|c| c.destroy(&self.device));
 
             self.data
                 .image_available_semaphore
@@ -333,9 +322,10 @@ pub struct RendererData {
     pub render_finished_semaphore: Vec<vk::Semaphore>,
     pub in_flight_fences: Vec<vk::Fence>,
     pub images_in_flight: Vec<vk::Fence>,
-    pub vertex_buffer: Buffer,
     pub uniforms: Uniforms<UniformBufferObject>,
     pub depth_buffer: DepthBuffer,
+
+    pub chunks: Vec<Chunk>,
 }
 
 unsafe fn create_sync_objects(device: &Device, data: &mut RendererData) -> Result<()> {

@@ -2,6 +2,7 @@ mod app;
 mod config;
 mod inputs;
 mod render;
+mod world;
 
 use std::time::Instant;
 
@@ -21,6 +22,7 @@ use winit::{
 
 fn main() {
     pretty_env_logger::init();
+
 
     let event_loop = EventLoop::new();
     let window = WindowBuilder::new()
