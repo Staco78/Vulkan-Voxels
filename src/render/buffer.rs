@@ -1,10 +1,10 @@
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use vulkanalia::{
-    vk::{self, DeviceV1_0, HasBuilder, InstanceV1_0},
+    vk::{self, DeviceV1_0, HasBuilder},
     Device, Instance,
 };
 
-use super::renderer::RendererData;
+use super::{memory::get_memory_type_index, renderer::RendererData};
 
 use std::ptr::copy_nonoverlapping;
 
@@ -70,20 +70,4 @@ impl Buffer {
         device.destroy_buffer(self.buffer, None);
         device.free_memory(self.memory, None);
     }
-}
-
-unsafe fn get_memory_type_index(
-    instance: &Instance,
-    data: &RendererData,
-    properties: vk::MemoryPropertyFlags,
-    requirements: vk::MemoryRequirements,
-) -> Result<u32> {
-    let memory = instance.get_physical_device_memory_properties(data.physical_device);
-    (0..memory.memory_type_count)
-        .find(|i| {
-            let suitable = (requirements.memory_type_bits & (1 << i)) != 0;
-            let memory_type = memory.memory_types[*i as usize];
-            suitable && memory_type.property_flags.contains(properties)
-        })
-        .ok_or_else(|| anyhow!("Failed to find suitable memory type."))
 }

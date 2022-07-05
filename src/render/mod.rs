@@ -12,5 +12,7 @@ mod sync;
 mod vertex;
 mod buffer;
 mod uniforms;
+mod depth;
+mod memory;
 
 pub use renderer::Renderer;

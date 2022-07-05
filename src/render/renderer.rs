@@ -14,6 +14,7 @@ use crate::config::MAX_FRAMES_IN_FLIGHT;
 use super::{
     buffer::Buffer,
     commands::{CommandBuffer, CommandPool},
+    depth::DepthBuffer,
     device,
     framebuffers::Framebuffers,
     instance, physical_device,
@@ -54,7 +55,8 @@ impl Renderer {
 
         data.swapchain = Swapchain::create(window, &instance, &device, &mut data)?;
         data.uniforms = Uniforms::create(&instance, &device, &data)?;
-        data.pipeline = Pipeline::create(&device, &data)?;
+        data.depth_buffer = DepthBuffer::create(&instance, &device, &data)?;
+        data.pipeline = Pipeline::create(&instance, &device, &data)?;
         data.framebuffers = Framebuffers::create(&device, &data)?;
         data.command_pool = CommandPool::create(&instance, &device, &data)?;
         data.command_buffers = data
@@ -67,13 +69,23 @@ impl Renderer {
             &instance,
             &device,
             &data,
-            3 * size_of::<Vertex>(),
+            36 * size_of::<Vertex>(),
             vk::BufferUsageFlags::VERTEX_BUFFER,
         )?;
+
         let vertices = [
-            Vertex::new(glm::vec3(0.0, -0.5, 0.0), glm::vec3(1.0, 1.0, 1.0)),
-            Vertex::new(glm::vec3(0.5, 0.5, 0.0), glm::vec3(0.0, 1.0, 0.0)),
-            Vertex::new(glm::vec3(-0.5, 0.5, 0.0), glm::vec3(0.0, 0.0, 1.0)),
+            Vertex::new(glm::vec3(-0.5, -0.5, 0.0), glm::vec3(1.0, 0.0, 0.0)),
+            Vertex::new(glm::vec3(0.5, -0.5, 0.0), glm::vec3(0.0, 1.0, 0.0)),
+            Vertex::new(glm::vec3(0.5, 0.5, 0.0), glm::vec3(0.0, 0.0, 1.0)),
+            Vertex::new(glm::vec3(0.5, 0.5, 0.0), glm::vec3(0.0, 0.0, 1.0)),
+            Vertex::new(glm::vec3(-0.5, 0.5, 0.0), glm::vec3(1.0, 1.0, 1.0)),
+            Vertex::new(glm::vec3(-0.5, -0.5, 0.0), glm::vec3(1.0, 0.0, 0.0)),
+            Vertex::new(glm::vec3(-0.5, -0.5, -0.5), glm::vec3(1.0, 0.0, 0.0)),
+            Vertex::new(glm::vec3(0.5, -0.5, -0.5), glm::vec3(0.0, 1.0, 0.0)),
+            Vertex::new(glm::vec3(0.5, 0.5, -0.5), glm::vec3(0.0, 0.0, 1.0)),
+            Vertex::new(glm::vec3(0.5, 0.5, -0.5), glm::vec3(0.0, 0.0, 1.0)),
+            Vertex::new(glm::vec3(-0.5, 0.5, -0.5), glm::vec3(1.0, 1.0, 1.0)),
+            Vertex::new(glm::vec3(-0.5, -0.5, -0.5), glm::vec3(1.0, 0.0, 0.0)),
         ];
 
         data.vertex_buffer.fill(&device, [vertices].as_ptr())?;
@@ -102,7 +114,14 @@ impl Renderer {
                 },
             };
 
-            let clear_values = &[color_clear_value];
+            let depth_clear_value = vk::ClearValue {
+                depth_stencil: vk::ClearDepthStencilValue {
+                    depth: 1.0,
+                    stencil: 0,
+                },
+            };
+
+            let clear_values = &[color_clear_value, depth_clear_value];
             let info = vk::RenderPassBeginInfo::builder()
                 .render_pass(self.data.pipeline.render_pass)
                 .framebuffer(self.data.framebuffers[i])
@@ -133,7 +152,7 @@ impl Renderer {
                 &[self.data.uniforms.descriptor_sets[i]],
                 &[],
             );
-            self.device.cmd_draw(command_buffer.buffer, 3, 1, 0, 0);
+            self.device.cmd_draw(command_buffer.buffer, 36, 1, 0, 0);
             self.device.cmd_end_render_pass(command_buffer.buffer);
 
             command_buffer.end(&self.device)?;
@@ -154,7 +173,7 @@ impl Renderer {
             &glm::vec3(0.0, 0.0, 0.0),
             &glm::vec3(0.0, 0.0, 1.0),
         );
-        let mut proj = glm::perspective(
+        let mut proj = glm::perspective_rh_zo(
             self.data.swapchain.extent.width as f32 / self.data.swapchain.extent.height as f32,
             glm::radians(&glm::vec1(45.0))[0],
             0.1,
@@ -247,6 +266,7 @@ impl Renderer {
 
     pub unsafe fn destroy_swapchain(&mut self) -> Result<()> {
         self.data.uniforms.destroy(&self.device);
+        self.data.depth_buffer.destroy(&self.device);
 
         self.data.framebuffers.destroy(&self.device);
         self.device.free_command_buffers(
@@ -267,10 +287,11 @@ impl Renderer {
         self.device.device_wait_idle()?;
         self.destroy_swapchain()?;
 
+        self.data.depth_buffer = DepthBuffer::create(&self.instance, &self.device, &self.data)?;
         self.data.uniforms = Uniforms::create(&self.instance, &self.device, &self.data)?;
         self.data.swapchain =
             Swapchain::create(window, &self.instance, &self.device, &mut self.data)?;
-        self.data.pipeline = Pipeline::create(&self.device, &self.data)?;
+        self.data.pipeline = Pipeline::create(&self.instance, &self.device, &self.data)?;
         self.data.framebuffers = Framebuffers::create(&self.device, &self.data)?;
         self.data.command_buffers = self
             .data
@@ -331,6 +352,7 @@ pub struct RendererData {
     pub images_in_flight: Vec<vk::Fence>,
     pub vertex_buffer: Buffer,
     pub uniforms: Uniforms<UniformBufferObject>,
+    pub depth_buffer: DepthBuffer,
 }
 
 unsafe fn create_sync_objects(device: &Device, data: &mut RendererData) -> Result<()> {

@@ -1,11 +1,11 @@
 use anyhow::{anyhow, Result};
 use vulkanalia::{
     vk::{self, DeviceV1_0, Handle, HasBuilder},
-    Device,
+    Device, Instance,
 };
 
-use super::renderer::RendererData;
 use super::vertex::Vertex;
+use super::{depth::get_depth_format, renderer::RendererData};
 
 #[derive(Default)]
 pub struct Pipeline {
@@ -15,7 +15,11 @@ pub struct Pipeline {
 }
 
 impl Pipeline {
-    pub unsafe fn create(device: &Device, data: &RendererData) -> Result<Self> {
+    pub unsafe fn create(
+        instance: &Instance,
+        device: &Device,
+        data: &RendererData,
+    ) -> Result<Self> {
         let vert = include_bytes!("../../assets/shaders/vert.spv");
         let frag = include_bytes!("../../assets/shaders/frag.spv");
 
@@ -88,7 +92,14 @@ impl Pipeline {
         let layout_info = vk::PipelineLayoutCreateInfo::builder().set_layouts(set_layouts);
         let layout = device.create_pipeline_layout(&layout_info, None)?;
 
-        let render_pass = create_render_pass(device, &data)?;
+        let render_pass = create_render_pass(instance, device, data)?;
+
+        let depth_stencil_state = vk::PipelineDepthStencilStateCreateInfo::builder()
+            .depth_test_enable(true)
+            .depth_write_enable(true)
+            .depth_compare_op(vk::CompareOp::LESS)
+            .depth_bounds_test_enable(false)
+            .stencil_test_enable(false);
 
         let stages = &[vert_stage, frag_stage];
         let info = vk::GraphicsPipelineCreateInfo::builder()
@@ -101,7 +112,8 @@ impl Pipeline {
             .color_blend_state(&color_blend_state)
             .layout(layout)
             .render_pass(render_pass)
-            .subpass(0);
+            .subpass(0)
+            .depth_stencil_state(&depth_stencil_state);
 
         let pipeline = device
             .create_graphics_pipelines(vk::PipelineCache::null(), &[info], None)?
@@ -138,7 +150,11 @@ unsafe fn create_shader_module(device: &Device, bytecode: &[u8]) -> Result<vk::S
     Ok(device.create_shader_module(&info, None)?)
 }
 
-unsafe fn create_render_pass(device: &Device, data: &RendererData) -> Result<vk::RenderPass> {
+unsafe fn create_render_pass(
+    instance: &Instance,
+    device: &Device,
+    data: &RendererData,
+) -> Result<vk::RenderPass> {
     let color_attachment = vk::AttachmentDescription::builder()
         .format(data.swapchain.format)
         .samples(vk::SampleCountFlags::_1)
@@ -153,21 +169,44 @@ unsafe fn create_render_pass(device: &Device, data: &RendererData) -> Result<vk:
         .attachment(0)
         .layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
 
-    let color_attachments = &[color_attachment_ref];
+    let depth_stencil_attachment = vk::AttachmentDescription::builder()
+        .format(get_depth_format(instance, data)?)
+        .samples(vk::SampleCountFlags::_1)
+        .load_op(vk::AttachmentLoadOp::CLEAR)
+        .store_op(vk::AttachmentStoreOp::DONT_CARE)
+        .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
+        .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
+        .initial_layout(vk::ImageLayout::UNDEFINED)
+        .final_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
 
+    let depth_stencil_attachment_ref = vk::AttachmentReference::builder()
+        .attachment(1)
+        .layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
+
+    let color_attachments = &[color_attachment_ref];
     let subpass = vk::SubpassDescription::builder()
         .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
-        .color_attachments(color_attachments);
+        .color_attachments(color_attachments)
+        .depth_stencil_attachment(&depth_stencil_attachment_ref);
 
     let dependency = vk::SubpassDependency::builder()
         .src_subpass(vk::SUBPASS_EXTERNAL)
         .dst_subpass(0)
-        .src_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
+        .src_stage_mask(
+            vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT
+                | vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS,
+        )
         .src_access_mask(vk::AccessFlags::empty())
-        .dst_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
-        .dst_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE);
+        .dst_stage_mask(
+            vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT
+                | vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS,
+        )
+        .dst_access_mask(
+            vk::AccessFlags::COLOR_ATTACHMENT_WRITE
+                | vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
+        );
 
-    let attachments = &[color_attachment];
+    let attachments = &[color_attachment, depth_stencil_attachment];
     let subpasses = &[subpass];
     let dependencies = &[dependency];
     let info = vk::RenderPassCreateInfo::builder()

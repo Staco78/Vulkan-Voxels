@@ -18,7 +18,7 @@ impl Framebuffers {
             .image_views
             .iter()
             .map(|i| {
-                let attachments = &[*i];
+                let attachments = &[*i, data.depth_buffer.image.view];
                 let create_info = vk::FramebufferCreateInfo::builder()
                     .render_pass(data.pipeline.render_pass)
                     .attachments(attachments)
