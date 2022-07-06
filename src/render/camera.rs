@@ -10,7 +10,6 @@ use crate::inputs::Inputs;
 use super::renderer::{RendererData, UniformBufferObject};
 
 pub struct Camera {
-    model: glm::Mat4,
     view: glm::Mat4,
     proj: glm::Mat4,
 
@@ -26,7 +25,6 @@ pub struct Camera {
 impl Camera {
     pub unsafe fn new(device: &Device, data: &mut RendererData) -> Result<Camera> {
         let mut cam = Camera {
-            model: glm::identity(),
             view: Mat4::default(),
             proj: Mat4::default(),
             pos: vec3(-20.0, 0.0, 0.0),
@@ -47,7 +45,6 @@ impl Camera {
 
     pub unsafe fn send_all(&self, device: &Device, data: &mut RendererData) -> Result<()> {
         let ubo = UniformBufferObject {
-            model: self.model,
             view: self.view,
             proj: self.proj,
         };
@@ -67,7 +64,7 @@ impl Camera {
     ) -> Result<()> {
         let ptr = data.uniforms.buffers[image_index].map(
             device,
-            size_of::<glm::Mat4>() as u64,
+            0,
             size_of::<glm::Mat4>() as u64,
         )?;
         *ptr = self.view;

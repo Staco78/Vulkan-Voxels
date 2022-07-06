@@ -1,7 +1,7 @@
 use std::mem::size_of;
 
 use anyhow::Result;
-use nalgebra_glm::{vec3, Mat4, TVec3};
+use nalgebra_glm::{vec3, TVec3};
 use vulkanalia::{vk, Device, Instance};
 
 use crate::{
@@ -25,7 +25,6 @@ pub struct Chunk {
     pub pos: ChunkPos,
     pub blocks: [Block; CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE],
     pub vertex_buffer: Buffer,
-    pub model: Mat4,
     pub vertices_size: usize,
 }
 
@@ -35,7 +34,6 @@ impl Chunk {
             pos,
             blocks: [Block { id: 1 }; CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE],
             vertex_buffer: Buffer::default(),
-            model: Mat4::identity(),
             vertices_size: 0,
         })
     }
@@ -46,7 +44,7 @@ impl Chunk {
         device: &Device,
         renderer_data: &RendererData,
     ) -> Result<()> {
-        const FRONT: [[u8; 3]; 6] = [
+        const FRONT: [[i32; 3]; 6] = [
             [0, 0, 0],
             [0, 1, 0],
             [0, 0, 1],
@@ -54,7 +52,7 @@ impl Chunk {
             [0, 1, 1],
             [0, 0, 1],
         ];
-        const BACK: [[u8; 3]; 6] = [
+        const BACK: [[i32; 3]; 6] = [
             [1, 0, 0],
             [1, 0, 1],
             [1, 1, 0],
@@ -62,7 +60,7 @@ impl Chunk {
             [1, 0, 1],
             [1, 1, 1],
         ];
-        const LEFT: [[u8; 3]; 6] = [
+        const LEFT: [[i32; 3]; 6] = [
             [1, 0, 0],
             [1, 1, 0],
             [0, 0, 0],
@@ -70,7 +68,7 @@ impl Chunk {
             [0, 1, 0],
             [0, 0, 0],
         ];
-        const RIGHT: [[u8; 3]; 6] = [
+        const RIGHT: [[i32; 3]; 6] = [
             [0, 0, 1],
             [0, 1, 1],
             [1, 0, 1],
@@ -78,7 +76,7 @@ impl Chunk {
             [1, 1, 1],
             [1, 0, 1],
         ];
-        const UP: [[u8; 3]; 6] = [
+        const UP: [[i32; 3]; 6] = [
             [0, 1, 0],
             [1, 1, 0],
             [0, 1, 1],
@@ -86,7 +84,7 @@ impl Chunk {
             [1, 1, 1],
             [0, 1, 1],
         ];
-        const DOWN: [[u8; 3]; 6] = [
+        const DOWN: [[i32; 3]; 6] = [
             [1, 0, 0],
             [0, 0, 0],
             [1, 0, 1],
@@ -95,11 +93,10 @@ impl Chunk {
             [1, 0, 1],
         ];
 
-        fn emit_face(face: &[[u8; 3]; 6], data: &mut Vec<Vertex>, pos: TVec3<u8>) {
+        fn emit_face(face: &[[i32; 3]; 6], data: &mut Vec<Vertex>, pos: TVec3<i32>) {
             for i in 0..6 {
                 let v = Vertex {
                     pos: pos + vec3(face[i][0], face[i][1], face[i][2]),
-                    padding: 0,
                     color: vec3(1., 1., 1.),
                 };
                 data.push(v);
@@ -112,7 +109,11 @@ impl Chunk {
                 for z in 0..CHUNK_SIZE {
                     let index = x * CHUNK_SIZE * CHUNK_SIZE + y * CHUNK_SIZE + z;
                     if self.blocks[index].id != 0 {
-                        let pos = vec3(x as u8, y as u8, z as u8);
+                        let mut pos = vec3(x as i32, y as i32, z as i32);
+                        pos.x += self.pos.x * CHUNK_SIZE as i32;
+                        pos.y += self.pos.y as i32 * CHUNK_SIZE as i32;
+                        pos.z += self.pos.z * CHUNK_SIZE as i32;
+
                         if x >= 15 || self.blocks[index + CHUNK_SIZE * CHUNK_SIZE].id == 0 {
                             emit_face(&BACK, &mut data, pos);
                         }

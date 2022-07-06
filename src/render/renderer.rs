@@ -29,7 +29,6 @@ use super::{
 #[repr(C)]
 #[derive(Default)]
 pub struct UniformBufferObject {
-    pub model: glm::Mat4,
     pub view: glm::Mat4,
     pub proj: glm::Mat4,
 }
@@ -66,6 +65,10 @@ impl Renderer {
         create_sync_objects(&device, &mut data)?;
 
         let mut chunk = Chunk::new(ChunkPos { x: 0, y: 0, z: 0 })?;
+        chunk.mesh(&instance, &device, &data)?;
+        data.chunks.push(chunk);
+
+        let mut chunk = Chunk::new(ChunkPos { x: 0, y: 1, z: 0 })?;
         chunk.mesh(&instance, &device, &data)?;
         data.chunks.push(chunk);
 
