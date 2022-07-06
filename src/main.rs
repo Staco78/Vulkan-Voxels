@@ -15,9 +15,9 @@ use vulkanalia::{
 use winit::{
     dpi::LogicalSize,
     event::Event,
-    event::{DeviceEvent, WindowEvent},
+    event::{DeviceEvent, WindowEvent, VirtualKeyCode},
     event_loop::{ControlFlow, EventLoop},
-    window::WindowBuilder,
+    window::{WindowBuilder, Fullscreen},
 };
 
 fn main() {
@@ -49,6 +49,14 @@ fn main() {
                 ..
             } => {
                 if let Some(key) = input.virtual_keycode {
+                    if key == VirtualKeyCode::F11 && input.state == winit::event::ElementState::Pressed {
+                        if window.fullscreen().is_some() {
+                            window.set_fullscreen(None);
+                        }
+                        else {
+                            window.set_fullscreen(Some(Fullscreen::Borderless(None)));
+                        }
+                    }
                     if input.state == winit::event::ElementState::Pressed {
                         app.inputs.key_pressed(key);
                     } else {

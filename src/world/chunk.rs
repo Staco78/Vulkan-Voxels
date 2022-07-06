@@ -1,12 +1,12 @@
 use std::mem::size_of;
 
 use anyhow::Result;
-use nalgebra_glm::{vec3, Mat4, Vec3};
+use nalgebra_glm::{vec3, Mat4, TVec3};
 use vulkanalia::{vk, Device, Instance};
 
 use crate::{
     config::CHUNK_SIZE,
-    render::{buffer::Buffer, renderer::{RendererData}, vertex::Vertex},
+    render::{buffer::Buffer, renderer::RendererData, vertex::Vertex},
 };
 
 #[derive(Clone, Copy)]
@@ -46,60 +46,61 @@ impl Chunk {
         device: &Device,
         renderer_data: &RendererData,
     ) -> Result<()> {
-        const FRONT: [[f32; 3]; 6] = [
-            [0.0, 0.0, 0.0],
-            [0.0, 1.0, 0.0],
-            [0.0, 0.0, 1.0],
-            [0.0, 1.0, 0.0],
-            [0.0, 1.0, 1.0],
-            [0.0, 0.0, 1.0],
+        const FRONT: [[u8; 3]; 6] = [
+            [0, 0, 0],
+            [0, 1, 0],
+            [0, 0, 1],
+            [0, 1, 0],
+            [0, 1, 1],
+            [0, 0, 1],
         ];
-        const BACK: [[f32; 3]; 6] = [
-            [1.0, 0.0, 0.0],
-            [1.0, 0.0, 1.0],
-            [1.0, 1.0, 0.0],
-            [1.0, 1.0, 0.0],
-            [1.0, 0.0, 1.0],
-            [1.0, 1.0, 1.0],
+        const BACK: [[u8; 3]; 6] = [
+            [1, 0, 0],
+            [1, 0, 1],
+            [1, 1, 0],
+            [1, 1, 0],
+            [1, 0, 1],
+            [1, 1, 1],
         ];
-        const LEFT: [[f32; 3]; 6] = [
-            [1.0, 0.0, 0.0],
-            [1.0, 1.0, 0.0],
-            [0.0, 0.0, 0.0],
-            [1.0, 1.0, 0.0],
-            [0.0, 1.0, 0.0],
-            [0.0, 0.0, 0.0],
+        const LEFT: [[u8; 3]; 6] = [
+            [1, 0, 0],
+            [1, 1, 0],
+            [0, 0, 0],
+            [1, 1, 0],
+            [0, 1, 0],
+            [0, 0, 0],
         ];
-        const RIGHT: [[f32; 3]; 6] = [
-            [0.0, 0.0, 1.0],
-            [0.0, 1.0, 1.0],
-            [1.0, 0.0, 1.0],
-            [0.0, 1.0, 1.0],
-            [1.0, 1.0, 1.0],
-            [1.0, 0.0, 1.0],
+        const RIGHT: [[u8; 3]; 6] = [
+            [0, 0, 1],
+            [0, 1, 1],
+            [1, 0, 1],
+            [0, 1, 1],
+            [1, 1, 1],
+            [1, 0, 1],
         ];
-        const UP: [[f32; 3]; 6] = [
-            [0.0, 1.0, 0.0],
-            [1.0, 1.0, 0.0],
-            [0.0, 1.0, 1.0],
-            [1.0, 1.0, 0.0],
-            [1.0, 1.0, 1.0],
-            [0.0, 1.0, 1.0],
+        const UP: [[u8; 3]; 6] = [
+            [0, 1, 0],
+            [1, 1, 0],
+            [0, 1, 1],
+            [1, 1, 0],
+            [1, 1, 1],
+            [0, 1, 1],
         ];
-        const DOWN: [[f32; 3]; 6] = [
-            [1.0, 0.0, 0.0],
-            [0.0, 0.0, 0.0],
-            [1.0, 0.0, 1.0],
-            [0.0, 0.0, 0.0],
-            [0.0, 0.0, 1.0],
-            [1.0, 0.0, 1.0],
+        const DOWN: [[u8; 3]; 6] = [
+            [1, 0, 0],
+            [0, 0, 0],
+            [1, 0, 1],
+            [0, 0, 0],
+            [0, 0, 1],
+            [1, 0, 1],
         ];
 
-        fn emit_face(face: &[[f32; 3]; 6], data: &mut Vec<Vertex>, pos: Vec3) {
+        fn emit_face(face: &[[u8; 3]; 6], data: &mut Vec<Vertex>, pos: TVec3<u8>) {
             for i in 0..6 {
                 let v = Vertex {
                     pos: pos + vec3(face[i][0], face[i][1], face[i][2]),
-                    color: vec3(1.0, 1.0, 1.0),
+                    padding: 0,
+                    color: vec3(1., 1., 1.),
                 };
                 data.push(v);
             }
@@ -111,7 +112,7 @@ impl Chunk {
                 for z in 0..CHUNK_SIZE {
                     let index = x * CHUNK_SIZE * CHUNK_SIZE + y * CHUNK_SIZE + z;
                     if self.blocks[index].id != 0 {
-                        let pos = vec3(x as f32, y as f32, z as f32);
+                        let pos = vec3(x as u8, y as u8, z as u8);
                         if x >= 15 || self.blocks[index + CHUNK_SIZE * CHUNK_SIZE].id == 0 {
                             emit_face(&BACK, &mut data, pos);
                         }
@@ -135,7 +136,6 @@ impl Chunk {
             }
         }
 
-        
         self.vertex_buffer = Buffer::create(
             instance,
             device,
@@ -143,13 +143,12 @@ impl Chunk {
             data.len() * size_of::<Vertex>(),
             vk::BufferUsageFlags::VERTEX_BUFFER,
         )?;
-        
+
         self.vertex_buffer.fill(device, data.as_ptr(), data.len())?;
         self.vertices_size = data.len();
 
         Ok(())
     }
-
 
     pub unsafe fn destroy(&self, device: &Device) {
         self.vertex_buffer.destroy(device);
