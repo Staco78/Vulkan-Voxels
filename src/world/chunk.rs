@@ -9,16 +9,11 @@ use crate::{
     render::{buffer::Buffer, renderer::RendererData, vertex::Vertex},
 };
 
+use super::world::ChunkPos;
+
 #[derive(Clone, Copy)]
 pub struct Block {
     id: u16,
-}
-
-#[derive(Clone, Copy)]
-pub struct ChunkPos {
-    pub x: i32,
-    pub y: u32,
-    pub z: i32,
 }
 
 pub struct Chunk {
@@ -93,11 +88,17 @@ impl Chunk {
             [1, 0, 1],
         ];
 
-        fn emit_face(face: &[[i32; 3]; 6], data: &mut Vec<Vertex>, pos: TVec3<i32>) {
+        fn emit_face(
+            face: &[[i32; 3]; 6],
+            data: &mut Vec<Vertex>,
+            pos: TVec3<i32>,
+            light_modifier: u8,
+        ) {
             for i in 0..6 {
                 let v = Vertex {
                     pos: pos + vec3(face[i][0], face[i][1], face[i][2]),
                     color: vec3(1., 1., 1.),
+                    light_modifier,
                 };
                 data.push(v);
             }
@@ -114,23 +115,25 @@ impl Chunk {
                         pos.y += self.pos.y as i32 * CHUNK_SIZE as i32;
                         pos.z += self.pos.z * CHUNK_SIZE as i32;
 
-                        if x >= 15 || self.blocks[index + CHUNK_SIZE * CHUNK_SIZE].id == 0 {
-                            emit_face(&BACK, &mut data, pos);
+                        if x >= CHUNK_SIZE - 1
+                            || self.blocks[index + CHUNK_SIZE * CHUNK_SIZE].id == 0
+                        {
+                            emit_face(&BACK, &mut data, pos, 8);
                         }
                         if x <= 0 || self.blocks[index - CHUNK_SIZE * CHUNK_SIZE].id == 0 {
-                            emit_face(&FRONT, &mut data, pos);
+                            emit_face(&FRONT, &mut data, pos, 8);
                         }
-                        if z >= 15 || self.blocks[index + 1].id == 0 {
-                            emit_face(&RIGHT, &mut data, pos);
+                        if z >= CHUNK_SIZE - 1 || self.blocks[index + 1].id == 0 {
+                            emit_face(&RIGHT, &mut data, pos, 6);
                         }
                         if z <= 0 || self.blocks[index - 1].id == 0 {
-                            emit_face(&LEFT, &mut data, pos);
+                            emit_face(&LEFT, &mut data, pos, 6);
                         }
-                        if y >= 15 || self.blocks[index + CHUNK_SIZE].id == 0 {
-                            emit_face(&UP, &mut data, pos);
+                        if y >= CHUNK_SIZE - 1 || self.blocks[index + CHUNK_SIZE].id == 0 {
+                            emit_face(&UP, &mut data, pos, 10);
                         }
                         if y <= 0 || self.blocks[index - CHUNK_SIZE].id == 0 {
-                            emit_face(&DOWN, &mut data, pos);
+                            emit_face(&DOWN, &mut data, pos, 5);
                         }
                     }
                 }

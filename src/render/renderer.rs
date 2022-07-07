@@ -7,11 +7,7 @@ use vulkanalia::{
 };
 use winit::window::Window;
 
-use crate::{
-    config::MAX_FRAMES_IN_FLIGHT,
-    inputs::Inputs,
-    world::{Chunk, ChunkPos},
-};
+use crate::{config::MAX_FRAMES_IN_FLIGHT, inputs::Inputs, world::World};
 
 use super::{
     camera::Camera,
@@ -34,12 +30,12 @@ pub struct UniformBufferObject {
 }
 
 pub struct Renderer {
-    instance: Instance,
-    device: vulkanalia::Device,
-    data: RendererData,
+    pub instance: Instance,
+    pub device: vulkanalia::Device,
+    pub data: RendererData,
     frame: usize,
     pub resized: bool,
-    camera: Camera,
+    pub camera: Camera,
 }
 
 impl Renderer {
@@ -64,14 +60,6 @@ impl Renderer {
 
         create_sync_objects(&device, &mut data)?;
 
-        let mut chunk = Chunk::new(ChunkPos { x: 0, y: 0, z: 0 })?;
-        chunk.mesh(&instance, &device, &data)?;
-        data.chunks.push(chunk);
-
-        let mut chunk = Chunk::new(ChunkPos { x: 0, y: 1, z: 0 })?;
-        chunk.mesh(&instance, &device, &data)?;
-        data.chunks.push(chunk);
-
         let camera = Camera::new(&device, &mut data)?;
 
         Ok(Self {
@@ -84,7 +72,8 @@ impl Renderer {
         })
     }
 
-    pub unsafe fn record_commands(&mut self) -> Result<()> {
+    pub unsafe fn record_commands(&mut self, world: &World) -> Result<()> {
+        self.data.command_pool.reset(&self.device)?;
         for (i, command_buffer) in self.data.command_buffers.iter_mut().enumerate() {
             command_buffer.begin(&self.device)?;
 
@@ -132,7 +121,7 @@ impl Renderer {
                 &[],
             );
 
-            for chunk in self.data.chunks.iter_mut() {
+            for chunk in world.chunks.values() {
                 self.device.cmd_bind_vertex_buffers(
                     command_buffer.buffer,
                     0,
@@ -156,7 +145,7 @@ impl Renderer {
         Ok(())
     }
 
-    pub unsafe fn render(&mut self, window: &Window, _dt: f32) -> Result<()> {
+    pub unsafe fn render(&mut self, window: &Window, world: &World, _dt: f32) -> Result<()> {
         self.device.wait_for_fences(
             &[self.data.in_flight_fences[self.frame]],
             true,
@@ -172,7 +161,7 @@ impl Renderer {
 
         let image_index = match result {
             Ok((image_index, _)) => image_index as usize,
-            Err(vk::ErrorCode::OUT_OF_DATE_KHR) => return self.recreate_swapchain(window),
+            Err(vk::ErrorCode::OUT_OF_DATE_KHR) => return self.recreate_swapchain(window, world),
             Err(e) => return Err(anyhow!(e)),
         };
 
@@ -223,7 +212,7 @@ impl Renderer {
             || result == Err(vk::ErrorCode::OUT_OF_DATE_KHR);
 
         if changed || self.resized {
-            self.recreate_swapchain(window)?;
+            self.recreate_swapchain(window, world)?;
             self.resized = false;
         } else if let Err(e) = result {
             return Err(anyhow!(e));
@@ -253,7 +242,7 @@ impl Renderer {
         Ok(())
     }
 
-    pub unsafe fn recreate_swapchain(&mut self, window: &Window) -> Result<()> {
+    pub unsafe fn recreate_swapchain(&mut self, window: &Window, world: &World) -> Result<()> {
         self.device.device_wait_idle()?;
         self.destroy_swapchain()?;
 
@@ -270,7 +259,7 @@ impl Renderer {
         self.data
             .images_in_flight
             .resize(self.data.swapchain.images.len(), vk::Fence::null());
-        self.record_commands()?;
+        self.record_commands(world)?;
         self.camera.update_projection(&self.data);
         self.camera.send_all(&self.device, &mut self.data)?;
         Ok(())
@@ -282,11 +271,6 @@ impl Drop for Renderer {
         unsafe {
             self.device.device_wait_idle().unwrap();
             self.destroy_swapchain().unwrap();
-
-            self.data
-                .chunks
-                .iter()
-                .for_each(|c| c.destroy(&self.device));
 
             self.data
                 .image_available_semaphore
@@ -327,8 +311,6 @@ pub struct RendererData {
     pub images_in_flight: Vec<vk::Fence>,
     pub uniforms: Uniforms<UniformBufferObject>,
     pub depth_buffer: DepthBuffer,
-
-    pub chunks: Vec<Chunk>,
 }
 
 unsafe fn create_sync_objects(device: &Device, data: &mut RendererData) -> Result<()> {

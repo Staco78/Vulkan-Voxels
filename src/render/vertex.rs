@@ -8,6 +8,7 @@ use vulkanalia::vk::{self, HasBuilder};
 pub struct Vertex {
     pub pos: glm::TVec3<i32>,
     pub color: glm::Vec3,
+    pub light_modifier: u8
 }
 
 impl Vertex {
@@ -19,7 +20,7 @@ impl Vertex {
             .build()
     }
 
-    pub fn attribute_descriptions() -> [vk::VertexInputAttributeDescription; 2] {
+    pub fn attribute_descriptions() -> [vk::VertexInputAttributeDescription; 3] {
         [
             vk::VertexInputAttributeDescription::builder()
                 .binding(0)
@@ -33,6 +34,12 @@ impl Vertex {
                 .format(vk::Format::R32G32B32_SFLOAT)
                 .offset(size_of::<glm::TVec3<i32>>() as u32)
                 .build(),
+                vk::VertexInputAttributeDescription::builder()
+                .binding(0)
+                .location(2)
+                .format(vk::Format::R8_UINT)
+                .offset(size_of::<glm::TVec3<i32>>() as u32 + size_of::<glm::Vec3>() as u32)
+                .build()
         ]
     }
 }

@@ -48,6 +48,12 @@ impl CommandPool {
         Ok(buffers)
     }
 
+    pub unsafe fn reset(&mut self, device: &Device) -> Result<()> {
+        device.reset_command_pool(self.pool, vk::CommandPoolResetFlags::empty())?;
+
+        Ok(())
+    }
+
     pub unsafe fn destroy(&self, device: &Device) {
         device.destroy_command_pool(self.pool, None);
     }
