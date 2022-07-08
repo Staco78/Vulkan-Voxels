@@ -38,7 +38,10 @@ extern "system" fn debug_callback(
     vk::FALSE
 }
 
-pub fn create(window: &Window, entry: &Entry, data: &mut RendererData) -> Result<Instance> {
+pub fn create(
+    window: &Window,
+    entry: &Entry,
+) -> Result<(Instance, Option<vk::DebugUtilsMessengerEXT>)> {
     let application_info = vk::ApplicationInfo::builder()
         .application_name(b"Vulkan Voxels\0")
         .application_version(vk::make_version(1, 0, 0))
@@ -89,21 +92,23 @@ pub fn create(window: &Window, entry: &Entry, data: &mut RendererData) -> Result
 
     let instance = unsafe { entry.create_instance(&info, None)? };
 
+    let mut messenger = None;
+
     if VALIDATION_ENABLED {
         let debug_info = vk::DebugUtilsMessengerCreateInfoEXT::builder()
             .message_severity(vk::DebugUtilsMessageSeverityFlagsEXT::all())
             .message_type(vk::DebugUtilsMessageTypeFlagsEXT::all())
             .user_callback(Some(debug_callback));
 
-        data.messenger = unsafe { instance.create_debug_utils_messenger_ext(&debug_info, None)? }
+        messenger = Some(unsafe { instance.create_debug_utils_messenger_ext(&debug_info, None)? });
     }
 
-    Ok(instance)
+    Ok((instance, messenger))
 }
 
-pub unsafe fn destroy(instance: &mut Instance, data: &mut RendererData) {
-    if VALIDATION_ENABLED {
-        instance.destroy_debug_utils_messenger_ext(data.messenger, None);
+pub unsafe fn destroy(data: &mut RendererData) {
+    if let Some(messenger) = data.messenger {
+        data.instance.destroy_debug_utils_messenger_ext(messenger, None);
     }
-    instance.destroy_instance(None);
+    data.instance.destroy_instance(None);
 }

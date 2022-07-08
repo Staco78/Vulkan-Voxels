@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use anyhow::Result;
 use nalgebra_glm::Vec3;
-use vulkanalia::{vk::DeviceV1_0, Device, Instance};
+use vulkanalia::vk::DeviceV1_0;
 
 use crate::{
     config::{CHUNK_SIZE, RENDER_DISTANCE},
@@ -29,13 +29,7 @@ impl World {
         }
     }
 
-    fn update_visible_chunks(
-        &mut self,
-        instance: &Instance,
-        device: &Device,
-        data: &RendererData,
-        player_pos: Vec3,
-    ) -> Result<()> {
+    fn update_visible_chunks(&mut self, data: &RendererData, player_pos: Vec3) -> Result<()> {
         let player_chunk_pos = ChunkPos {
             x: (player_pos.x / CHUNK_SIZE as f32).floor() as i32,
             y: (player_pos.y / CHUNK_SIZE as f32).floor() as u32,
@@ -56,13 +50,10 @@ impl World {
         }
 
         unsafe {
-            device.device_wait_idle()?;
+            data.device.device_wait_idle()?;
         }
 
         for pos in chunks_to_destroy {
-            unsafe {
-                self.chunks.get(&pos).unwrap().destroy(device);
-            }
             self.chunks.remove(&pos);
         }
 
@@ -81,7 +72,7 @@ impl World {
                     let pos = ChunkPos { x, y: y as u32, z };
                     if !self.chunks.contains_key(&pos) {
                         let mut chunk = Chunk::new(pos)?;
-                        unsafe { chunk.mesh(instance, device, data)? };
+                        unsafe { chunk.mesh(data)? };
                         self.chunks.insert(pos, chunk);
                     }
                 }
@@ -91,14 +82,8 @@ impl World {
         Ok(())
     }
 
-    pub fn tick(
-        &mut self,
-        instance: &Instance,
-        device: &Device,
-        data: &RendererData,
-        player_pos: Vec3,
-    ) -> Result<()> {
-        self.update_visible_chunks(instance, device, data, player_pos)?;
+    pub fn tick(&mut self, data: &RendererData, player_pos: Vec3) -> Result<()> {
+        self.update_visible_chunks(data, player_pos)?;
 
         Ok(())
     }

@@ -2,7 +2,7 @@ use std::mem::size_of;
 
 use anyhow::Result;
 use nalgebra_glm::{vec3, TVec3};
-use vulkanalia::{vk, Device, Instance};
+use vulkanalia::vk;
 
 use crate::{
     config::CHUNK_SIZE,
@@ -19,26 +19,33 @@ pub struct Block {
 pub struct Chunk {
     pub pos: ChunkPos,
     pub blocks: [Block; CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE],
-    pub vertex_buffer: Buffer,
+    pub vertex_buffer: Option<Buffer>,
     pub vertices_size: usize,
 }
 
 impl Chunk {
     pub fn new(pos: ChunkPos) -> Result<Self> {
-        Ok(Self {
+        let mut c = Self {
             pos,
-            blocks: [Block { id: 1 }; CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE],
-            vertex_buffer: Buffer::default(),
+            blocks: [Block { id: 0 }; CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE],
+            vertex_buffer: None,
             vertices_size: 0,
-        })
+        };
+
+        for x in 0..CHUNK_SIZE {
+            for y in 0..CHUNK_SIZE {
+                let height = (x as i32 - y as i32).abs() as usize;
+                assert!(height < CHUNK_SIZE);
+                for z in 0..height {
+                    c.blocks[x * CHUNK_SIZE * CHUNK_SIZE + y * CHUNK_SIZE + z].id = 1;
+                }
+            }
+        }
+
+        Ok(c)
     }
 
-    pub unsafe fn mesh(
-        &mut self,
-        instance: &Instance,
-        device: &Device,
-        renderer_data: &RendererData,
-    ) -> Result<()> {
+    pub unsafe fn mesh(&mut self, renderer_data: &RendererData) -> Result<()> {
         const FRONT: [[i32; 3]; 6] = [
             [0, 0, 0],
             [0, 1, 0],
@@ -140,21 +147,19 @@ impl Chunk {
             }
         }
 
-        self.vertex_buffer = Buffer::create(
-            instance,
-            device,
+        self.vertex_buffer = Some(Buffer::create(
             renderer_data,
             data.len() * size_of::<Vertex>(),
             vk::BufferUsageFlags::VERTEX_BUFFER,
-        )?;
+        )?);
 
-        self.vertex_buffer.fill(device, data.as_ptr(), data.len())?;
+        self.vertex_buffer.as_mut().unwrap().fill(
+            &renderer_data.device,
+            data.as_ptr(),
+            data.len(),
+        )?;
         self.vertices_size = data.len();
 
         Ok(())
-    }
-
-    pub unsafe fn destroy(&self, device: &Device) {
-        self.vertex_buffer.destroy(device);
     }
 }

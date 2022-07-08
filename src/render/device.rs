@@ -1,15 +1,15 @@
 use anyhow::Result;
 use std::collections::HashSet;
+use std::rc::Rc;
 use vulkanalia::vk::{DeviceV1_0, HasBuilder};
-use vulkanalia::{vk, Instance};
+use vulkanalia::{vk, Instance, Device};
 
 use crate::config::{DEVICE_EXTENSIONS, VALIDATION_ENABLED, VALIDATION_LAYER};
 
 use super::queue::QueueFamilyIndices;
-use super::renderer::RendererData;
 
-pub unsafe fn create(instance: &Instance, data: &mut RendererData) -> Result<vulkanalia::Device> {
-    let indices = QueueFamilyIndices::get(instance, data, data.physical_device)?;
+pub unsafe fn create(instance: &Instance, surface: vk::SurfaceKHR, physical_device: vk::PhysicalDevice) -> Result<(vulkanalia::Device, vk::Queue, vk::Queue)> {
+    let indices = QueueFamilyIndices::get(instance, surface, physical_device)?;
 
     let mut unique_indices = HashSet::new();
     unique_indices.insert(indices.graphics);
@@ -44,15 +44,15 @@ pub unsafe fn create(instance: &Instance, data: &mut RendererData) -> Result<vul
         .enabled_features(&features)
         .enabled_extension_names(&extensions);
 
-    let device = instance.create_device(data.physical_device, &info, None)?;
+    let device = instance.create_device(physical_device, &info, None)?;
 
-    data.graphics_queue = device.get_device_queue(indices.graphics, 0);
-    data.present_queue = device.get_device_queue(indices.present, 0);
+    let graphics_queue = device.get_device_queue(indices.graphics, 0);
+    let present_queue = device.get_device_queue(indices.present, 0);
 
-    Ok(device)
+    Ok((device, graphics_queue, present_queue))
 }
 
 #[inline]
-pub unsafe fn destroy(device: &mut vulkanalia::Device) {
+pub unsafe fn destroy(device: &mut Rc<Device>) {
     device.destroy_device(None);
 }

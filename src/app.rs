@@ -21,12 +21,8 @@ impl App {
     }
 
     pub fn tick(&mut self) -> Result<()> {
-        self.world.tick(
-            &self.renderer.instance,
-            &self.renderer.device,
-            &self.renderer.data,
-            self.renderer.camera.pos,
-        )?;
+        self.world
+            .tick(&self.renderer.data, self.renderer.camera.pos)?;
         unsafe { self.renderer.record_commands(&self.world)? };
         Ok(())
     }
@@ -46,10 +42,7 @@ impl App {
 impl Drop for App {
     fn drop(&mut self) {
         unsafe {
-            self.renderer.device.device_wait_idle().unwrap();
-            for chunk in self.world.chunks.values() {
-                chunk.destroy(&self.renderer.device);
-            }
+            self.renderer.data.device.device_wait_idle().unwrap();
         }
     }
 }

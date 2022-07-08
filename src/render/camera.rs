@@ -3,7 +3,6 @@ use std::mem::size_of;
 use anyhow::Result;
 use glm::{vec3, Mat4, Vec3};
 use nalgebra_glm as glm;
-use vulkanalia::Device;
 
 use crate::inputs::Inputs;
 
@@ -23,7 +22,7 @@ pub struct Camera {
 }
 
 impl Camera {
-    pub unsafe fn new(device: &Device, data: &mut RendererData) -> Result<Camera> {
+    pub unsafe fn new(data: &mut RendererData) -> Result<Camera> {
         let mut cam = Camera {
             view: Mat4::default(),
             proj: Mat4::default(),
@@ -38,19 +37,19 @@ impl Camera {
         cam.update_view();
         cam.update_projection(data);
 
-        cam.send_all(device, data)?;
+        cam.send_all(data)?;
 
         Ok(cam)
     }
 
-    pub unsafe fn send_all(&self, device: &Device, data: &mut RendererData) -> Result<()> {
+    pub unsafe fn send_all(&self,  data: &mut RendererData) -> Result<()> {
         let ubo = UniformBufferObject {
             view: self.view,
             proj: self.proj,
         };
 
-        data.uniforms.buffers.iter_mut().for_each(|b| {
-            b.fill(device, &ubo, 1).unwrap();
+        data.uniforms.as_mut().unwrap().buffers.iter_mut().for_each(|b| {
+            b.fill(&data.device, &ubo, 1).unwrap();
         });
 
         Ok(())
@@ -58,17 +57,16 @@ impl Camera {
 
     pub unsafe fn send(
         &self,
-        device: &Device,
         data: &mut RendererData,
         image_index: usize,
     ) -> Result<()> {
-        let ptr = data.uniforms.buffers[image_index].map(
-            device,
+        let ptr = data.uniforms.as_mut().unwrap().buffers[image_index].map(
+            &data.device,
             0,
             size_of::<glm::Mat4>() as u64,
         )?;
         *ptr = self.view;
-        data.uniforms.buffers[image_index].unmap(device)?;
+        data.uniforms.as_mut().unwrap().buffers[image_index].unmap(&data.device)?;
 
         Ok(())
     }
@@ -127,7 +125,7 @@ impl Camera {
 
     pub fn update_projection(&mut self, data: &RendererData) {
         self.proj = glm::perspective_rh_zo(
-            data.swapchain.extent.width as f32 / data.swapchain.extent.height as f32,
+            data.swapchain.as_ref().unwrap().extent.width as f32 / data.swapchain.as_ref().unwrap().extent.height as f32,
             self.fov.to_radians(),
             self.near,
             self.far,

@@ -1,3 +1,5 @@
+use std::rc::Rc;
+
 use anyhow::{anyhow, Result};
 use nalgebra_glm as glm;
 use vulkanalia::{
@@ -23,15 +25,12 @@ use super::{
 };
 
 #[repr(C)]
-#[derive(Default)]
 pub struct UniformBufferObject {
     pub view: glm::Mat4,
     pub proj: glm::Mat4,
 }
 
 pub struct Renderer {
-    pub instance: Instance,
-    pub device: vulkanalia::Device,
     pub data: RendererData,
     frame: usize,
     pub resized: bool,
@@ -40,46 +39,107 @@ pub struct Renderer {
 
 impl Renderer {
     pub unsafe fn new(window: &Window, entry: &Entry) -> Result<Self> {
-        let mut data = RendererData::default();
-        let instance = instance::create(window, entry, &mut data)?;
-        data.surface = vulkanalia::window::create_surface(&instance, window)?;
+        let (instance, messenger) = instance::create(window, entry)?;
+        let surface = vulkanalia::window::create_surface(&instance, window)?;
+        let physical_device = physical_device::pick(&instance, surface)?;
+        let (device, graphics_queue, present_queue) =
+            device::create(&instance, surface, physical_device)?;
 
-        physical_device::pick(&instance, &mut data)?;
+        let device = Rc::new(device);
 
-        let device = device::create(&instance, &mut data)?;
+        let mut data = RendererData::new(
+            instance,
+            messenger,
+            surface,
+            physical_device,
+            device,
+            graphics_queue,
+            present_queue,
+        );
 
-        data.swapchain = Swapchain::create(window, &instance, &device, &mut data)?;
-        data.uniforms = Uniforms::create(&instance, &device, &data)?;
-        data.depth_buffer = DepthBuffer::create(&instance, &device, &data)?;
-        data.pipeline = Pipeline::create(&instance, &device, &data)?;
-        data.framebuffers = Framebuffers::create(&device, &data)?;
-        data.command_pool = CommandPool::create(&instance, &device, &data)?;
+        data.swapchain = Some(Swapchain::create(window, &data)?);
+        data.uniforms = Some(Uniforms::create(&data)?);
+        data.depth_buffer = Some(DepthBuffer::create(&data)?);
+        data.pipeline = Some(Pipeline::create(&data)?);
+        data.framebuffers = Some(Framebuffers::create(&data)?);
+        data.command_pool = Some(CommandPool::create(&data)?);
         data.command_buffers = data
             .command_pool
-            .allocate_command_buffers(&device, data.swapchain.images.len() as u32)?;
+            .as_mut()
+            .unwrap()
+            .allocate_command_buffers(
+                &data.device,
+                data.swapchain.as_ref().unwrap().images.len() as u32,
+            )?;
 
-        create_sync_objects(&device, &mut data)?;
+        let camera = Camera::new(&mut data)?;
 
-        let camera = Camera::new(&device, &mut data)?;
-
-        Ok(Self {
-            instance,
-            device,
+        let mut r = Self {
             data,
             frame: 0,
             resized: false,
             camera,
-        })
+        };
+
+        r.create_sync_objects().unwrap();
+
+        Ok(r)
+    }
+
+    unsafe fn create_sync_objects(&mut self) -> Result<()> {
+        self.data.image_available_semaphore =
+            sync::create_semaphores(&self.data.device, MAX_FRAMES_IN_FLIGHT)?;
+        self.data.render_finished_semaphore =
+            sync::create_semaphores(&self.data.device, MAX_FRAMES_IN_FLIGHT)?;
+        self.data.in_flight_fences =
+            sync::create_fences(&self.data.device, true, MAX_FRAMES_IN_FLIGHT)?;
+        self.data.images_in_flight = self
+            .data
+            .swapchain
+            .as_ref()
+            .unwrap()
+            .images
+            .iter()
+            .map(|_| vk::Fence::null())
+            .collect();
+        Ok(())
+    }
+
+    unsafe fn destroy_sync_objects(&mut self) -> Result<()> {
+        self.data
+            .image_available_semaphore
+            .iter()
+            .for_each(|s| self.data.device.destroy_semaphore(*s, None));
+        self.data.image_available_semaphore.clear();
+
+        self.data
+            .render_finished_semaphore
+            .iter()
+            .for_each(|s| self.data.device.destroy_semaphore(*s, None));
+        self.data.render_finished_semaphore.clear();
+
+        self.data
+            .in_flight_fences
+            .iter()
+            .for_each(|f| self.data.device.destroy_fence(*f, None));
+        self.data.in_flight_fences.clear();
+
+        Ok(())
     }
 
     pub unsafe fn record_commands(&mut self, world: &World) -> Result<()> {
-        self.data.command_pool.reset(&self.device)?;
+        self.data.device.device_wait_idle()?;
+        self.data
+            .command_pool
+            .as_mut()
+            .unwrap()
+            .reset(&self.data.device)?;
         for (i, command_buffer) in self.data.command_buffers.iter_mut().enumerate() {
-            command_buffer.begin(&self.device)?;
+            command_buffer.begin(&self.data.device)?;
 
             let render_area = vk::Rect2D::builder()
                 .offset(vk::Offset2D::default())
-                .extent(self.data.swapchain.extent);
+                .extent(self.data.swapchain.as_ref().unwrap().extent);
 
             let color_clear_value = vk::ClearValue {
                 color: vk::ClearColorValue {
@@ -96,46 +156,51 @@ impl Renderer {
 
             let clear_values = &[color_clear_value, depth_clear_value];
             let info = vk::RenderPassBeginInfo::builder()
-                .render_pass(self.data.pipeline.render_pass)
-                .framebuffer(self.data.framebuffers[i])
+                .render_pass(self.data.pipeline.as_ref().unwrap().render_pass)
+                .framebuffer(self.data.framebuffers.as_ref().unwrap()[i])
                 .render_area(render_area)
                 .clear_values(clear_values);
 
-            self.device.cmd_begin_render_pass(
+            self.data.device.cmd_begin_render_pass(
                 command_buffer.buffer,
                 &info,
                 vk::SubpassContents::INLINE,
             );
-            self.device.cmd_bind_pipeline(
+            self.data.device.cmd_bind_pipeline(
                 command_buffer.buffer,
                 vk::PipelineBindPoint::GRAPHICS,
-                self.data.pipeline.pipeline,
+                self.data.pipeline.as_ref().unwrap().pipeline,
             );
 
-            self.device.cmd_bind_descriptor_sets(
+            self.data.device.cmd_bind_descriptor_sets(
                 command_buffer.buffer,
                 vk::PipelineBindPoint::GRAPHICS,
-                self.data.pipeline.layout,
+                self.data.pipeline.as_ref().unwrap().layout,
                 0,
-                &[self.data.uniforms.descriptor_sets[i]],
+                &[self.data.uniforms.as_ref().unwrap().descriptor_sets[i]],
                 &[],
             );
 
             for chunk in world.chunks.values() {
-                self.device.cmd_bind_vertex_buffers(
+                self.data.device.cmd_bind_vertex_buffers(
                     command_buffer.buffer,
                     0,
-                    &[chunk.vertex_buffer.buffer],
+                    &[chunk.vertex_buffer.as_ref().unwrap().buffer],
                     &[0],
                 );
 
-                self.device
-                    .cmd_draw(command_buffer.buffer, chunk.vertices_size as u32, 1, 0, 0);
+                self.data.device.cmd_draw(
+                    command_buffer.buffer,
+                    chunk.vertices_size as u32,
+                    1,
+                    0,
+                    0,
+                );
             }
 
-            self.device.cmd_end_render_pass(command_buffer.buffer);
+            self.data.device.cmd_end_render_pass(command_buffer.buffer);
 
-            command_buffer.end(&self.device)?;
+            command_buffer.end(&self.data.device)?;
         }
         Ok(())
     }
@@ -146,14 +211,14 @@ impl Renderer {
     }
 
     pub unsafe fn render(&mut self, window: &Window, world: &World, _dt: f32) -> Result<()> {
-        self.device.wait_for_fences(
+        self.data.device.wait_for_fences(
             &[self.data.in_flight_fences[self.frame]],
             true,
             u64::max_value(),
         )?;
 
-        let result = self.device.acquire_next_image_khr(
-            self.data.swapchain.swapchain,
+        let result = self.data.device.acquire_next_image_khr(
+            self.data.swapchain.as_ref().unwrap().swapchain,
             u64::max_value(),
             self.data.image_available_semaphore[self.frame],
             vk::Fence::null(),
@@ -166,7 +231,7 @@ impl Renderer {
         };
 
         if !self.data.images_in_flight[image_index as usize].is_null() {
-            self.device.wait_for_fences(
+            self.data.device.wait_for_fences(
                 &[self.data.images_in_flight[image_index as usize]],
                 true,
                 u64::max_value(),
@@ -175,8 +240,7 @@ impl Renderer {
 
         self.data.images_in_flight[image_index as usize] = self.data.in_flight_fences[self.frame];
 
-        self.camera
-            .send(&self.device, &mut self.data, image_index)?;
+        self.camera.send(&mut self.data, image_index)?;
 
         let wait_semaphores = &[self.data.image_available_semaphore[self.frame]];
         let wait_stages = &[vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
@@ -188,16 +252,17 @@ impl Renderer {
             .command_buffers(command_buffers)
             .signal_semaphores(signal_semaphores);
 
-        self.device
+        self.data
+            .device
             .reset_fences(&[self.data.in_flight_fences[self.frame]])?;
 
-        self.device.queue_submit(
+        self.data.device.queue_submit(
             self.data.graphics_queue,
             &[submit_info],
             self.data.in_flight_fences[self.frame],
         )?;
 
-        let swapchains = &[self.data.swapchain.swapchain];
+        let swapchains = &[self.data.swapchain.as_ref().unwrap().swapchain];
         let image_indices = &[image_index as u32];
         let present_info = vk::PresentInfoKHR::builder()
             .wait_semaphores(signal_semaphores)
@@ -205,6 +270,7 @@ impl Renderer {
             .image_indices(image_indices);
 
         let result = self
+            .data
             .device
             .queue_present_khr(self.data.present_queue, &present_info);
 
@@ -223,13 +289,14 @@ impl Renderer {
         Ok(())
     }
 
-    pub unsafe fn destroy_swapchain(&mut self) -> Result<()> {
-        self.data.uniforms.destroy(&self.device);
-        self.data.depth_buffer.destroy(&self.device);
+    pub unsafe fn recreate_swapchain(&mut self, window: &Window, world: &World) -> Result<()> {
+        self.data.device.device_wait_idle()?;
 
-        self.data.framebuffers.destroy(&self.device);
-        self.device.free_command_buffers(
-            self.data.command_pool.pool,
+        self.data.uniforms = None;
+        self.data.depth_buffer = None;
+        self.data.framebuffers = None;
+        self.data.device.free_command_buffers(
+            self.data.command_pool.as_ref().unwrap().pool,
             &self
                 .data
                 .command_buffers
@@ -237,31 +304,32 @@ impl Renderer {
                 .map(|b| b.buffer)
                 .collect::<Vec<vk::CommandBuffer>>(),
         );
-        self.data.pipeline.destroy(&self.device);
-        self.data.swapchain.destroy(&self.device);
-        Ok(())
-    }
+        self.data.command_buffers.clear();
+        self.data.pipeline = None;
+        self.data.swapchain = None;
 
-    pub unsafe fn recreate_swapchain(&mut self, window: &Window, world: &World) -> Result<()> {
-        self.device.device_wait_idle()?;
-        self.destroy_swapchain()?;
-
-        self.data.uniforms = Uniforms::create(&self.instance, &self.device, &self.data)?;
-        self.data.swapchain =
-            Swapchain::create(window, &self.instance, &self.device, &mut self.data)?;
-        self.data.depth_buffer = DepthBuffer::create(&self.instance, &self.device, &self.data)?;
-        self.data.pipeline = Pipeline::create(&self.instance, &self.device, &self.data)?;
-        self.data.framebuffers = Framebuffers::create(&self.device, &self.data)?;
+        self.data.swapchain = Some(Swapchain::create(window, &self.data)?);
+        self.data.uniforms = Some(Uniforms::create(&self.data)?);
+        self.data.depth_buffer = Some(DepthBuffer::create(&self.data)?);
+        self.data.pipeline = Some(Pipeline::create(&self.data)?);
+        self.data.framebuffers = Some(Framebuffers::create(&self.data)?);
         self.data.command_buffers = self
             .data
             .command_pool
-            .allocate_command_buffers(&self.device, self.data.swapchain.images.len() as u32)?;
-        self.data
-            .images_in_flight
-            .resize(self.data.swapchain.images.len(), vk::Fence::null());
+            .as_mut()
+            .unwrap()
+            .allocate_command_buffers(
+                &self.data.device,
+                self.data.swapchain.as_ref().unwrap().images.len() as u32,
+            )?;
+        self.data.images_in_flight.resize(
+            self.data.swapchain.as_ref().unwrap().images.len(),
+            vk::Fence::null(),
+        );
         self.record_commands(world)?;
         self.camera.update_projection(&self.data);
-        self.camera.send_all(&self.device, &mut self.data)?;
+        self.camera.send_all(&mut self.data)?;
+
         Ok(())
     }
 }
@@ -269,59 +337,78 @@ impl Renderer {
 impl Drop for Renderer {
     fn drop(&mut self) {
         unsafe {
-            self.device.device_wait_idle().unwrap();
-            self.destroy_swapchain().unwrap();
+            self.data.device.device_wait_idle().unwrap();
 
-            self.data
-                .image_available_semaphore
-                .iter()
-                .for_each(|s| self.device.destroy_semaphore(*s, None));
-            self.data
-                .render_finished_semaphore
-                .iter()
-                .for_each(|s| self.device.destroy_semaphore(*s, None));
-            self.data
-                .in_flight_fences
-                .iter()
-                .for_each(|f| self.device.destroy_fence(*f, None));
+            // set all options to None to call Drop in the right order
+            self.data.depth_buffer = None;
+            self.data.uniforms = None;
+            self.data.framebuffers = None;
+            self.data.command_buffers.clear();
+            self.data.command_pool = None;
+            self.data.pipeline = None;
+            self.data.swapchain = None;
 
-            self.data.command_pool.destroy(&self.device);
-            device::destroy(&mut self.device);
-            self.instance.destroy_surface_khr(self.data.surface, None);
-            instance::destroy(&mut self.instance, &mut self.data);
+            self.destroy_sync_objects().unwrap();
+
+            device::destroy(&mut self.data.device);
+            self.data
+                .instance
+                .destroy_surface_khr(self.data.surface, None);
+            instance::destroy(&mut self.data);
         }
     }
 }
 
-#[derive(Default)]
 pub struct RendererData {
-    pub messenger: vk::DebugUtilsMessengerEXT,
-    pub physical_device: vk::PhysicalDevice,
+    pub instance: Instance,
+    pub messenger: Option<vk::DebugUtilsMessengerEXT>,
     pub surface: vk::SurfaceKHR,
+    pub physical_device: vk::PhysicalDevice,
+    pub device: Rc<Device>,
     pub graphics_queue: vk::Queue,
     pub present_queue: vk::Queue,
-    pub swapchain: Swapchain,
-    pub pipeline: Pipeline,
-    pub framebuffers: Framebuffers,
-    pub command_pool: CommandPool,
+    pub swapchain: Option<Swapchain>,
+    pub pipeline: Option<Pipeline>,
+    pub framebuffers: Option<Framebuffers>,
+    pub command_pool: Option<CommandPool>,
     pub command_buffers: Vec<CommandBuffer>,
     pub image_available_semaphore: Vec<vk::Semaphore>,
     pub render_finished_semaphore: Vec<vk::Semaphore>,
     pub in_flight_fences: Vec<vk::Fence>,
     pub images_in_flight: Vec<vk::Fence>,
-    pub uniforms: Uniforms<UniformBufferObject>,
-    pub depth_buffer: DepthBuffer,
+    pub uniforms: Option<Uniforms<UniformBufferObject>>,
+    pub depth_buffer: Option<DepthBuffer>,
 }
 
-unsafe fn create_sync_objects(device: &Device, data: &mut RendererData) -> Result<()> {
-    data.image_available_semaphore = sync::create_semaphores(device, MAX_FRAMES_IN_FLIGHT)?;
-    data.render_finished_semaphore = sync::create_semaphores(device, MAX_FRAMES_IN_FLIGHT)?;
-    data.in_flight_fences = sync::create_fences(device, true, MAX_FRAMES_IN_FLIGHT)?;
-    data.images_in_flight = data
-        .swapchain
-        .images
-        .iter()
-        .map(|_| vk::Fence::null())
-        .collect();
-    Ok(())
+impl RendererData {
+    pub fn new(
+        instance: Instance,
+        messenger: Option<vk::DebugUtilsMessengerEXT>,
+        surface: vk::SurfaceKHR,
+        physical_device: vk::PhysicalDevice,
+        device: Rc<Device>,
+        graphics_queue: vk::Queue,
+        present_queue: vk::Queue,
+    ) -> Self {
+        Self {
+            instance,
+            messenger,
+            surface,
+            physical_device,
+            device,
+            graphics_queue,
+            present_queue,
+            swapchain: None,
+            pipeline: None,
+            framebuffers: None,
+            command_pool: None,
+            command_buffers: Vec::new(),
+            image_available_semaphore: Vec::new(),
+            render_finished_semaphore: Vec::new(),
+            in_flight_fences: Vec::new(),
+            images_in_flight: Vec::new(),
+            uniforms: None,
+            depth_buffer: None,
+        }
+    }
 }

@@ -1,15 +1,19 @@
 use anyhow::{anyhow, Result};
 use vulkanalia::{
     vk::{self, DeviceV1_0, HasBuilder},
-    Device, Instance,
+    Device,
 };
 
 use super::{memory::get_memory_type_index, renderer::RendererData};
 
-use std::{mem::size_of, ptr::copy_nonoverlapping};
+use std::{
+    mem::size_of,
+    ptr::copy_nonoverlapping,
+    rc::{self, Rc},
+};
 
-#[derive(Default)]
 pub struct Buffer {
+    device: rc::Weak<Device>,
     pub buffer: vk::Buffer,
     pub memory: vk::DeviceMemory,
     current_map_ranges: Option<[vk::MappedMemoryRangeBuilder; 1]>,
@@ -17,8 +21,6 @@ pub struct Buffer {
 
 impl Buffer {
     pub unsafe fn create(
-        instance: &Instance,
-        device: &Device,
         data: &RendererData,
         size: usize,
         usage: vk::BufferUsageFlags,
@@ -26,24 +28,24 @@ impl Buffer {
         let info = vk::BufferCreateInfo::builder()
             .size(size as u64)
             .usage(usage);
-        let buffer = device.create_buffer(&info, None)?;
+        let buffer = data.device.create_buffer(&info, None)?;
 
-        let memory_requirements = device.get_buffer_memory_requirements(buffer);
+        let memory_requirements = data.device.get_buffer_memory_requirements(buffer);
 
         let memory_info = vk::MemoryAllocateInfo::builder()
             .allocation_size(memory_requirements.size)
             .memory_type_index(get_memory_type_index(
-                instance,
                 data,
                 vk::MemoryPropertyFlags::HOST_VISIBLE,
                 memory_requirements,
             )?);
 
-        let memory = device.allocate_memory(&memory_info, None)?;
+        let memory = data.device.allocate_memory(&memory_info, None)?;
 
-        device.bind_buffer_memory(buffer, memory, 0)?;
+        data.device.bind_buffer_memory(buffer, memory, 0)?;
 
         Ok(Self {
+            device: Rc::downgrade(&data.device),
             buffer,
             memory,
             current_map_ranges: None,
@@ -86,9 +88,14 @@ impl Buffer {
 
         Ok(())
     }
+}
 
-    pub unsafe fn destroy(&self, device: &Device) {
-        device.destroy_buffer(self.buffer, None);
-        device.free_memory(self.memory, None);
+impl Drop for Buffer {
+    fn drop(&mut self) {
+        let device = self.device.upgrade().unwrap();
+        unsafe {
+            device.destroy_buffer(self.buffer, None);
+            device.free_memory(self.memory, None);
+        }
     }
 }

@@ -1,3 +1,5 @@
+use std::rc::{self, Rc};
+
 use anyhow::Result;
 use vulkanalia::{
     vk::{self, DeviceV1_0, HasBuilder},
@@ -6,36 +8,47 @@ use vulkanalia::{
 
 use super::renderer::RendererData;
 
-#[derive(Default)]
+
 pub struct Framebuffers {
+    device: rc::Weak<Device>,
     framebuffers: Vec<vk::Framebuffer>,
 }
 
 impl Framebuffers {
-    pub unsafe fn create(device: &Device, data: &RendererData) -> Result<Self> {
+    pub unsafe fn create(data: &RendererData) -> Result<Self> {
         let framebuffers = data
             .swapchain
+            .as_ref()
+            .unwrap()
             .image_views
             .iter()
             .map(|i| {
-                let attachments = &[*i, data.depth_buffer.image.view];
+                let attachments = &[*i, data.depth_buffer.as_ref().unwrap().image.view];
                 let create_info = vk::FramebufferCreateInfo::builder()
-                    .render_pass(data.pipeline.render_pass)
+                    .render_pass(data.pipeline.as_ref().unwrap().render_pass)
                     .attachments(attachments)
-                    .width(data.swapchain.extent.width)
-                    .height(data.swapchain.extent.height)
+                    .width(data.swapchain.as_ref().unwrap().extent.width)
+                    .height(data.swapchain.as_ref().unwrap().extent.height)
                     .layers(1);
 
-                device.create_framebuffer(&create_info, None)
+                data.device.create_framebuffer(&create_info, None)
             })
             .collect::<Result<Vec<_>, _>>()?;
 
-        Ok(Self { framebuffers })
+        Ok(Self {
+            framebuffers,
+            device: Rc::downgrade(&data.device),
+        })
     }
+}
 
-    pub unsafe fn destroy(&self, device: &Device) {
-        for f in self.framebuffers.iter() {
-            device.destroy_framebuffer(*f, None);
+impl Drop for Framebuffers {
+    fn drop(&mut self) {
+        let device = self.device.upgrade().unwrap();
+        unsafe {
+            for f in self.framebuffers.iter() {
+                device.destroy_framebuffer(*f, None);
+            }
         }
     }
 }

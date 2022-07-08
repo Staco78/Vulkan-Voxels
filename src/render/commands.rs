@@ -1,31 +1,33 @@
 use anyhow::Result;
 use vulkanalia::{
     vk::{self, DeviceV1_0, HasBuilder},
-    Device, Instance,
+    Device,
 };
+
+use std::rc::{self, Rc};
 
 use super::{queue, renderer::RendererData};
 
-#[derive(Default)]
 pub struct CommandPool {
+    device: rc::Weak<Device>,
     pub pool: vk::CommandPool,
 }
 
 impl CommandPool {
-    pub unsafe fn create(
-        instance: &Instance,
-        device: &Device,
-        data: &RendererData,
-    ) -> Result<Self> {
-        let indices = queue::QueueFamilyIndices::get(instance, data, data.physical_device)?;
+    pub unsafe fn create(data: &RendererData) -> Result<Self> {
+        let indices =
+            queue::QueueFamilyIndices::get(&data.instance, data.surface, data.physical_device)?;
 
         let info = vk::CommandPoolCreateInfo::builder()
             .queue_family_index(indices.graphics)
             .flags(vk::CommandPoolCreateFlags::empty());
 
-        let pool = device.create_command_pool(&info, None)?;
+        let pool = data.device.create_command_pool(&info, None)?;
 
-        Ok(Self { pool })
+        Ok(Self {
+            pool,
+            device: Rc::downgrade(&data.device),
+        })
     }
 
     pub unsafe fn allocate_command_buffers(
@@ -53,13 +55,19 @@ impl CommandPool {
 
         Ok(())
     }
+}
 
-    pub unsafe fn destroy(&self, device: &Device) {
-        device.destroy_command_pool(self.pool, None);
+impl Drop for CommandPool {
+    fn drop(&mut self) {
+        unsafe {
+            self.device
+                .upgrade()
+                .unwrap()
+                .destroy_command_pool(self.pool, None);
+        }
     }
 }
 
-#[derive(Default)]
 pub struct CommandBuffer {
     pub buffer: vk::CommandBuffer,
 }

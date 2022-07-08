@@ -1,7 +1,8 @@
 use anyhow::{anyhow, Result};
+use std::rc::{self, Rc};
 use vulkanalia::{
     vk::{self, DeviceV1_0, Handle, HasBuilder},
-    Device, Instance,
+    Device,
 };
 
 use super::vertex::Vertex;
@@ -9,22 +10,19 @@ use super::{depth::get_depth_format, renderer::RendererData};
 
 #[derive(Default)]
 pub struct Pipeline {
+    device: rc::Weak<Device>,
     pub pipeline: vk::Pipeline,
     pub layout: vk::PipelineLayout,
     pub render_pass: vk::RenderPass,
 }
 
 impl Pipeline {
-    pub unsafe fn create(
-        instance: &Instance,
-        device: &Device,
-        data: &RendererData,
-    ) -> Result<Self> {
+    pub unsafe fn create(data: &RendererData) -> Result<Self> {
         let vert = include_bytes!("../../assets/shaders/vert.spv");
         let frag = include_bytes!("../../assets/shaders/frag.spv");
 
-        let vert_shader_module = create_shader_module(device, &vert[..])?;
-        let frag_shader_module = create_shader_module(device, &frag[..])?;
+        let vert_shader_module = create_shader_module(&data.device, &vert[..])?;
+        let frag_shader_module = create_shader_module(&data.device, &frag[..])?;
 
         let vert_stage = vk::PipelineShaderStageCreateInfo::builder()
             .stage(vk::ShaderStageFlags::VERTEX)
@@ -49,14 +47,14 @@ impl Pipeline {
         let viewport = vk::Viewport::builder()
             .x(0.0)
             .y(0.0)
-            .width(data.swapchain.extent.width as f32)
-            .height(data.swapchain.extent.height as f32)
+            .width(data.swapchain.as_ref().unwrap().extent.width as f32)
+            .height(data.swapchain.as_ref().unwrap().extent.height as f32)
             .min_depth(0.0)
             .max_depth(1.0);
 
         let scissor = vk::Rect2D::builder()
             .offset(vk::Offset2D { x: 0, y: 0 })
-            .extent(data.swapchain.extent);
+            .extent(data.swapchain.as_ref().unwrap().extent);
 
         let viewports = &[viewport];
         let scissors = &[scissor];
@@ -88,11 +86,11 @@ impl Pipeline {
             .attachments(attachments)
             .blend_constants([0.0, 0.0, 0.0, 0.0]);
 
-        let set_layouts = &[data.uniforms.descriptor_set_layout];
+        let set_layouts = &[data.uniforms.as_ref().unwrap().descriptor_set_layout];
         let layout_info = vk::PipelineLayoutCreateInfo::builder().set_layouts(set_layouts);
-        let layout = device.create_pipeline_layout(&layout_info, None)?;
+        let layout = data.device.create_pipeline_layout(&layout_info, None)?;
 
-        let render_pass = create_render_pass(instance, device, data)?;
+        let render_pass = create_render_pass(data)?;
 
         let depth_stencil_state = vk::PipelineDepthStencilStateCreateInfo::builder()
             .depth_test_enable(true)
@@ -115,24 +113,31 @@ impl Pipeline {
             .subpass(0)
             .depth_stencil_state(&depth_stencil_state);
 
-        let pipeline = device
+        let pipeline = data
+            .device
             .create_graphics_pipelines(vk::PipelineCache::null(), &[info], None)?
             .0;
 
-        device.destroy_shader_module(vert_shader_module, None);
-        device.destroy_shader_module(frag_shader_module, None);
+        data.device.destroy_shader_module(vert_shader_module, None);
+        data.device.destroy_shader_module(frag_shader_module, None);
 
         Ok(Self {
             pipeline,
             layout,
             render_pass,
+            device: Rc::downgrade(&data.device),
         })
     }
+}
 
-    pub unsafe fn destroy(&self, device: &Device) {
-        device.destroy_pipeline(self.pipeline, None);
-        device.destroy_pipeline_layout(self.layout, None);
-        device.destroy_render_pass(self.render_pass, None);
+impl Drop for Pipeline {
+    fn drop(&mut self) {
+        let device = self.device.upgrade().unwrap();
+        unsafe {
+            device.destroy_pipeline(self.pipeline, None);
+            device.destroy_pipeline_layout(self.layout, None);
+            device.destroy_render_pass(self.render_pass, None);
+        }
     }
 }
 
@@ -150,13 +155,9 @@ unsafe fn create_shader_module(device: &Device, bytecode: &[u8]) -> Result<vk::S
     Ok(device.create_shader_module(&info, None)?)
 }
 
-unsafe fn create_render_pass(
-    instance: &Instance,
-    device: &Device,
-    data: &RendererData,
-) -> Result<vk::RenderPass> {
+unsafe fn create_render_pass(data: &RendererData) -> Result<vk::RenderPass> {
     let color_attachment = vk::AttachmentDescription::builder()
-        .format(data.swapchain.format)
+        .format(data.swapchain.as_ref().unwrap().format)
         .samples(vk::SampleCountFlags::_1)
         .load_op(vk::AttachmentLoadOp::CLEAR)
         .store_op(vk::AttachmentStoreOp::STORE)
@@ -170,7 +171,7 @@ unsafe fn create_render_pass(
         .layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
 
     let depth_stencil_attachment = vk::AttachmentDescription::builder()
-        .format(get_depth_format(instance, data)?)
+        .format(get_depth_format(data)?)
         .samples(vk::SampleCountFlags::_1)
         .load_op(vk::AttachmentLoadOp::CLEAR)
         .store_op(vk::AttachmentStoreOp::DONT_CARE)
@@ -214,5 +215,5 @@ unsafe fn create_render_pass(
         .subpasses(subpasses)
         .dependencies(dependencies);
 
-    Ok(device.create_render_pass(&info, None)?)
+    Ok(data.device.create_render_pass(&info, None)?)
 }

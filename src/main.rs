@@ -77,10 +77,14 @@ fn main() {
                 ..
             } => {
                 if focused {
-                    window.set_cursor_grab(true).unwrap();
+                    window
+                        .set_cursor_grab(true)
+                        .unwrap_or_else(|_| warn!("Failed to grab cursor"));
                     window.set_cursor_visible(false);
                 } else {
-                    window.set_cursor_grab(false).unwrap();
+                    window
+                        .set_cursor_grab(false)
+                        .unwrap_or_else(|_| warn!("Failed to release cursor"));
                     window.set_cursor_visible(true);
                 }
             }

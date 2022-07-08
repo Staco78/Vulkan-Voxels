@@ -1,12 +1,12 @@
 use anyhow::Result;
+use std::rc::{self, Rc};
 use vulkanalia::{
     vk::{self, DeviceV1_0, Handle, HasBuilder, KhrSurfaceExtension, KhrSwapchainExtension},
     Device, Instance,
 };
 use winit::window::Window;
 
-use super::renderer::RendererData;
-use super::{images::create_image_view, queue::QueueFamilyIndices};
+use super::{images::create_image_view, queue::QueueFamilyIndices, renderer::RendererData};
 
 pub struct SwapchainSupport {
     pub capabilities: vk::SurfaceCapabilitiesKHR,
@@ -17,16 +17,15 @@ pub struct SwapchainSupport {
 impl SwapchainSupport {
     pub unsafe fn get(
         instance: &Instance,
-        data: &RendererData,
+        surface: vk::SurfaceKHR,
         physical_device: vk::PhysicalDevice,
     ) -> Result<Self> {
         Ok(Self {
             capabilities: instance
-                .get_physical_device_surface_capabilities_khr(physical_device, data.surface)?,
-            formats: instance
-                .get_physical_device_surface_formats_khr(physical_device, data.surface)?,
+                .get_physical_device_surface_capabilities_khr(physical_device, surface)?,
+            formats: instance.get_physical_device_surface_formats_khr(physical_device, surface)?,
             present_modes: instance
-                .get_physical_device_surface_present_modes_khr(physical_device, data.surface)?,
+                .get_physical_device_surface_present_modes_khr(physical_device, surface)?,
         })
     }
 }
@@ -73,6 +72,8 @@ fn get_swapchain_extent(window: &Window, capabilities: vk::SurfaceCapabilitiesKH
 
 #[derive(Default)]
 pub struct Swapchain {
+    device: rc::Weak<Device>,
+
     pub swapchain: vk::SwapchainKHR,
     pub format: vk::Format,
     pub extent: vk::Extent2D,
@@ -83,12 +84,10 @@ pub struct Swapchain {
 impl Swapchain {
     pub unsafe fn create(
         window: &Window,
-        instance: &Instance,
-        device: &Device,
-        data: &RendererData,
+        data: &RendererData
     ) -> Result<Self> {
-        let indices = QueueFamilyIndices::get(instance, data, data.physical_device)?;
-        let support = SwapchainSupport::get(instance, data, data.physical_device)?;
+        let indices = QueueFamilyIndices::get(&data.instance, data.surface, data.physical_device)?;
+        let support = SwapchainSupport::get(&data.instance, data.surface, data.physical_device)?;
 
         let surface_format = get_swapchain_surface_format(&support.formats);
         let present_mode = get_swapchain_present_mode(&support.present_modes);
@@ -126,13 +125,13 @@ impl Swapchain {
             .clipped(true)
             .old_swapchain(vk::SwapchainKHR::null());
 
-        let swapchain = device.create_swapchain_khr(&info, None)?;
-        let images = device.get_swapchain_images_khr(swapchain)?;
+        let swapchain = data.device.create_swapchain_khr(&info, None)?;
+        let images = data.device.get_swapchain_images_khr(swapchain)?;
         let image_views = images
             .iter()
             .map(|i| {
                 create_image_view(
-                    device,
+                    &data.device,
                     *i,
                     surface_format.format,
                     vk::ImageAspectFlags::COLOR,
@@ -147,13 +146,19 @@ impl Swapchain {
             extent,
             images,
             image_views,
+            device: Rc::downgrade(&data.device),
         })
     }
+}
 
-    pub unsafe fn destroy(&mut self, device: &Device) {
-        self.image_views
-            .iter()
-            .for_each(|i| device.destroy_image_view(*i, None));
-        device.destroy_swapchain_khr(self.swapchain, None);
+impl Drop for Swapchain {
+    fn drop(&mut self) {
+        let device = self.device.upgrade().unwrap();
+        unsafe {
+            self.image_views
+                .iter()
+                .for_each(|i| device.destroy_image_view(*i, None));
+            device.destroy_swapchain_khr(self.swapchain, None);
+        }
     }
 }

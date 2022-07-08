@@ -1,8 +1,10 @@
+use std::rc::{self, Rc};
+
 use super::{memory::get_memory_type_index, renderer::RendererData};
 use anyhow::Result;
 use vulkanalia::{
     vk::{self, DeviceV1_0, HasBuilder},
-    Device, Instance,
+    Device,
 };
 
 pub unsafe fn create_image_view(
@@ -35,24 +37,22 @@ pub unsafe fn create_image_view(
     Ok(device.create_image_view(&info, None)?)
 }
 
-#[derive(Default)]
 pub struct Image {
+    device: rc::Weak<Device>,
     pub image: vk::Image,
     pub memory: vk::DeviceMemory,
-    pub view: vk::ImageView
+    pub view: vk::ImageView,
 }
 
 impl Image {
     pub unsafe fn create(
-        instance: &Instance,
-        device: &Device,
         data: &RendererData,
         size: (u32, u32),
         format: vk::Format,
         tiling: vk::ImageTiling,
         usage: vk::ImageUsageFlags,
         properties: vk::MemoryPropertyFlags,
-        aspects: vk::ImageAspectFlags
+        aspects: vk::ImageAspectFlags,
     ) -> Result<Self> {
         let info = vk::ImageCreateInfo::builder()
             .image_type(vk::ImageType::_2D)
@@ -70,35 +70,36 @@ impl Image {
             .samples(vk::SampleCountFlags::_1)
             .sharing_mode(vk::SharingMode::EXCLUSIVE);
 
-        let image = device.create_image(&info, None)?;
+        let image = data.device.create_image(&info, None)?;
 
-        let requirements = device.get_image_memory_requirements(image);
+        let requirements = data.device.get_image_memory_requirements(image);
 
         let info = vk::MemoryAllocateInfo::builder()
             .allocation_size(requirements.size)
-            .memory_type_index(get_memory_type_index(
-                instance,
-                data,
-                properties,
-                requirements,
-            )?);
+            .memory_type_index(get_memory_type_index(data, properties, requirements)?);
 
-        let image_memory = device.allocate_memory(&info, None)?;
+        let image_memory = data.device.allocate_memory(&info, None)?;
 
-        device.bind_image_memory(image, image_memory, 0)?;
+        data.device.bind_image_memory(image, image_memory, 0)?;
 
-        let view = create_image_view(device, image, format, aspects, 1)?;
+        let view = create_image_view(&data.device, image, format, aspects, 1)?;
 
         Ok(Self {
             image,
             memory: image_memory,
-            view
+            view,
+            device: Rc::downgrade(&data.device),
         })
     }
+}
 
-    pub unsafe fn destroy(&self, device: &Device) {
-        device.destroy_image_view(self.view, None);
-        device.free_memory(self.memory, None);
-        device.destroy_image(self.image, None);
+impl Drop for Image {
+    fn drop(&mut self) {
+        let device = self.device.upgrade().unwrap();
+        unsafe {
+            device.destroy_image_view(self.view, None);
+            device.free_memory(self.memory, None);
+            device.destroy_image(self.image, None);
+        }
     }
 }
