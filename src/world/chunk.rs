@@ -1,6 +1,7 @@
 use std::mem::size_of;
 
 use anyhow::Result;
+use log::trace;
 use nalgebra_glm::{vec3, TVec3};
 use vulkanalia::vk;
 
@@ -20,7 +21,8 @@ pub struct Chunk {
     pub pos: ChunkPos,
     pub blocks: [Block; CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE],
     pub vertex_buffer: Option<Buffer>,
-    pub vertices_size: usize,
+    pub vertices: Vec<Vertex>,
+    pub vertices_len: usize,
 }
 
 impl Chunk {
@@ -29,7 +31,8 @@ impl Chunk {
             pos,
             blocks: [Block { id: 0 }; CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE],
             vertex_buffer: None,
-            vertices_size: 0,
+            vertices: Vec::new(),
+            vertices_len: 0,
         };
 
         for x in 0..CHUNK_SIZE {
@@ -42,10 +45,14 @@ impl Chunk {
             }
         }
 
+        trace!("Create chunk {:?}", c.pos);
+
         Ok(c)
     }
 
-    pub unsafe fn mesh(&mut self, renderer_data: &RendererData) -> Result<()> {
+    pub fn mesh(&mut self) -> Result<()> {
+        trace!("Mesh chunk {:?}", self.pos);
+
         const FRONT: [[i32; 3]; 6] = [
             [0, 0, 0],
             [0, 1, 0],
@@ -111,7 +118,6 @@ impl Chunk {
             }
         }
 
-        let mut data = Vec::new();
         for x in 0..CHUNK_SIZE {
             for y in 0..CHUNK_SIZE {
                 for z in 0..CHUNK_SIZE {
@@ -125,41 +131,56 @@ impl Chunk {
                         if x >= CHUNK_SIZE - 1
                             || self.blocks[index + CHUNK_SIZE * CHUNK_SIZE].id == 0
                         {
-                            emit_face(&BACK, &mut data, pos, 8);
+                            emit_face(&BACK, &mut self.vertices, pos, 8);
                         }
                         if x <= 0 || self.blocks[index - CHUNK_SIZE * CHUNK_SIZE].id == 0 {
-                            emit_face(&FRONT, &mut data, pos, 8);
+                            emit_face(&FRONT, &mut self.vertices, pos, 8);
                         }
                         if z >= CHUNK_SIZE - 1 || self.blocks[index + 1].id == 0 {
-                            emit_face(&RIGHT, &mut data, pos, 6);
+                            emit_face(&RIGHT, &mut self.vertices, pos, 6);
                         }
                         if z <= 0 || self.blocks[index - 1].id == 0 {
-                            emit_face(&LEFT, &mut data, pos, 6);
+                            emit_face(&LEFT, &mut self.vertices, pos, 6);
                         }
                         if y >= CHUNK_SIZE - 1 || self.blocks[index + CHUNK_SIZE].id == 0 {
-                            emit_face(&UP, &mut data, pos, 10);
+                            emit_face(&UP, &mut self.vertices, pos, 10);
                         }
                         if y <= 0 || self.blocks[index - CHUNK_SIZE].id == 0 {
-                            emit_face(&DOWN, &mut data, pos, 5);
+                            emit_face(&DOWN, &mut self.vertices, pos, 5);
                         }
                     }
                 }
             }
         }
 
+        Ok(())
+    }
+
+    pub unsafe fn finish_mesh(&mut self, renderer_data: &RendererData) -> Result<()> {
+        trace!("Finish mesh chunk {:?}", self.pos);
+        
         self.vertex_buffer = Some(Buffer::create(
             renderer_data,
-            data.len() * size_of::<Vertex>(),
+            self.vertices.len() * size_of::<Vertex>(),
             vk::BufferUsageFlags::VERTEX_BUFFER,
         )?);
 
         self.vertex_buffer.as_mut().unwrap().fill(
             &renderer_data.device,
-            data.as_ptr(),
-            data.len(),
+            self.vertices.as_ptr(),
+            self.vertices.len(),
         )?;
-        self.vertices_size = data.len();
 
+        self.vertices_len = self.vertices.len();
+
+        self.vertices.clear();
+        self.vertices.shrink_to_fit();
         Ok(())
+    }
+}
+
+impl Drop for Chunk {
+    fn drop(&mut self) {
+        trace!("Drop chunk {:?}", self.pos);
     }
 }

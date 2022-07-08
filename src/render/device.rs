@@ -1,6 +1,6 @@
 use anyhow::Result;
 use std::collections::HashSet;
-use std::rc::Rc;
+use std::sync::Arc;
 use vulkanalia::vk::{DeviceV1_0, HasBuilder};
 use vulkanalia::{vk, Instance, Device};
 
@@ -53,6 +53,6 @@ pub unsafe fn create(instance: &Instance, surface: vk::SurfaceKHR, physical_devi
 }
 
 #[inline]
-pub unsafe fn destroy(device: &mut Rc<Device>) {
+pub unsafe fn destroy(device: &mut Arc<Device>) {
     device.destroy_device(None);
 }

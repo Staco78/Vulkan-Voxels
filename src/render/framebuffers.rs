@@ -1,4 +1,5 @@
-use std::rc::{self, Rc};
+
+use std::sync::{self, Arc};
 
 use anyhow::Result;
 use vulkanalia::{
@@ -10,7 +11,7 @@ use super::renderer::RendererData;
 
 
 pub struct Framebuffers {
-    device: rc::Weak<Device>,
+    device: sync::Weak<Device>,
     framebuffers: Vec<vk::Framebuffer>,
 }
 
@@ -37,7 +38,7 @@ impl Framebuffers {
 
         Ok(Self {
             framebuffers,
-            device: Rc::downgrade(&data.device),
+            device: Arc::downgrade(&data.device),
         })
     }
 }

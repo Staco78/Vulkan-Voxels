@@ -1,5 +1,6 @@
+use std::sync::{self, Arc};
+
 use anyhow::{anyhow, Result};
-use std::rc::{self, Rc};
 use vulkanalia::{
     vk::{self, DeviceV1_0, Handle, HasBuilder},
     Device,
@@ -10,7 +11,7 @@ use super::{depth::get_depth_format, renderer::RendererData};
 
 #[derive(Default)]
 pub struct Pipeline {
-    device: rc::Weak<Device>,
+    device: sync::Weak<Device>,
     pub pipeline: vk::Pipeline,
     pub layout: vk::PipelineLayout,
     pub render_pass: vk::RenderPass,
@@ -125,7 +126,7 @@ impl Pipeline {
             pipeline,
             layout,
             render_pass,
-            device: Rc::downgrade(&data.device),
+            device: Arc::downgrade(&data.device),
         })
     }
 }

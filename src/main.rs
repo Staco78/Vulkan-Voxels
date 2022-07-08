@@ -2,6 +2,7 @@ mod app;
 mod config;
 mod inputs;
 mod render;
+mod threads;
 mod world;
 
 use std::time::Instant;

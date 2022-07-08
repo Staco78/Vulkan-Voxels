@@ -4,12 +4,12 @@ use vulkanalia::{
     Device,
 };
 
-use std::rc::{self, Rc};
+use std::sync::{self, Arc};
 
 use super::{queue, renderer::RendererData};
 
 pub struct CommandPool {
-    device: rc::Weak<Device>,
+    device: sync::Weak<Device>,
     pub pool: vk::CommandPool,
 }
 
@@ -26,7 +26,7 @@ impl CommandPool {
 
         Ok(Self {
             pool,
-            device: Rc::downgrade(&data.device),
+            device: Arc::downgrade(&data.device),
         })
     }
 

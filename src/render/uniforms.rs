@@ -1,4 +1,4 @@
-use std::{marker::PhantomData, mem::size_of, rc::{self, Rc}};
+use std::{marker::PhantomData, mem::size_of, sync::{self, Arc}};
 
 use super::{buffer::Buffer, renderer::RendererData};
 use anyhow::Result;
@@ -8,7 +8,7 @@ use vulkanalia::{
 };
 
 pub struct Uniforms<T> {
-    device: rc::Weak<Device>,
+    device: sync::Weak<Device>,
 
     pub descriptor_set_layout: vk::DescriptorSetLayout,
     pub buffers: Vec<Buffer>,
@@ -85,7 +85,7 @@ impl<T> Uniforms<T> {
         };
 
         Ok(Self {
-            device: Rc::downgrade(&data.device),
+            device: Arc::downgrade(&data.device),
             descriptor_set_layout,
             buffers,
             descriptor_pool,

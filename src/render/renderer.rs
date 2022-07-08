@@ -1,4 +1,4 @@
-use std::rc::Rc;
+use std::sync::{Arc, Mutex, Weak};
 
 use anyhow::{anyhow, Result};
 use nalgebra_glm as glm;
@@ -9,7 +9,11 @@ use vulkanalia::{
 };
 use winit::window::Window;
 
-use crate::{config::MAX_FRAMES_IN_FLIGHT, inputs::Inputs, world::World};
+use crate::{
+    config::MAX_FRAMES_IN_FLIGHT,
+    inputs::Inputs,
+    world::{Chunk, World},
+};
 
 use super::{
     camera::Camera,
@@ -45,7 +49,7 @@ impl Renderer {
         let (device, graphics_queue, present_queue) =
             device::create(&instance, surface, physical_device)?;
 
-        let device = Rc::new(device);
+        let device = Arc::new(device);
 
         let mut data = RendererData::new(
             instance,
@@ -127,7 +131,7 @@ impl Renderer {
         Ok(())
     }
 
-    pub unsafe fn record_commands(&mut self, world: &World) -> Result<()> {
+    pub unsafe fn record_commands(&mut self, chunks: &mut Vec<Weak<Mutex<Chunk>>>) -> Result<()> {
         self.data.device.device_wait_idle()?;
         self.data
             .command_pool
@@ -181,21 +185,34 @@ impl Renderer {
                 &[],
             );
 
-            for chunk in world.chunks.values() {
-                self.data.device.cmd_bind_vertex_buffers(
-                    command_buffer.buffer,
-                    0,
-                    &[chunk.vertex_buffer.as_ref().unwrap().buffer],
-                    &[0],
-                );
+            let mut to_remove = Vec::new();
 
-                self.data.device.cmd_draw(
-                    command_buffer.buffer,
-                    chunk.vertices_size as u32,
-                    1,
-                    0,
-                    0,
-                );
+            for (i, chunk) in chunks.iter().enumerate() {
+                if let Some(chunk) = chunk.upgrade() {
+                    let chunk = chunk.lock().unwrap();
+                    self.data.device.cmd_bind_vertex_buffers(
+                        command_buffer.buffer,
+                        0,
+                        &[chunk.vertex_buffer.as_ref().unwrap().buffer],
+                        &[0],
+                    );
+
+                    self.data.device.cmd_draw(
+                        command_buffer.buffer,
+                        chunk.vertices_len as u32,
+                        1,
+                        0,
+                        0,
+                    );
+                } else {
+                    to_remove.push(i);
+                }
+            }
+
+            to_remove.reverse();
+
+            for i in to_remove {
+                chunks.swap_remove(i);
             }
 
             self.data.device.cmd_end_render_pass(command_buffer.buffer);
@@ -210,7 +227,7 @@ impl Renderer {
         Ok(())
     }
 
-    pub unsafe fn render(&mut self, window: &Window, world: &World, _dt: f32) -> Result<()> {
+    pub unsafe fn render(&mut self, window: &Window, world: &mut World, _dt: f32) -> Result<()> {
         self.data.device.wait_for_fences(
             &[self.data.in_flight_fences[self.frame]],
             true,
@@ -289,7 +306,7 @@ impl Renderer {
         Ok(())
     }
 
-    pub unsafe fn recreate_swapchain(&mut self, window: &Window, world: &World) -> Result<()> {
+    pub unsafe fn recreate_swapchain(&mut self, window: &Window, world: &mut World) -> Result<()> {
         self.data.device.device_wait_idle()?;
 
         self.data.uniforms = None;
@@ -326,7 +343,7 @@ impl Renderer {
             self.data.swapchain.as_ref().unwrap().images.len(),
             vk::Fence::null(),
         );
-        self.record_commands(world)?;
+        self.record_commands(&mut world.chunks_to_render)?;
         self.camera.update_projection(&self.data);
         self.camera.send_all(&mut self.data)?;
 
@@ -364,7 +381,7 @@ pub struct RendererData {
     pub messenger: Option<vk::DebugUtilsMessengerEXT>,
     pub surface: vk::SurfaceKHR,
     pub physical_device: vk::PhysicalDevice,
-    pub device: Rc<Device>,
+    pub device: Arc<Device>,
     pub graphics_queue: vk::Queue,
     pub present_queue: vk::Queue,
     pub swapchain: Option<Swapchain>,
@@ -386,7 +403,7 @@ impl RendererData {
         messenger: Option<vk::DebugUtilsMessengerEXT>,
         surface: vk::SurfaceKHR,
         physical_device: vk::PhysicalDevice,
-        device: Rc<Device>,
+        device: Arc<Device>,
         graphics_queue: vk::Queue,
         present_queue: vk::Queue,
     ) -> Self {

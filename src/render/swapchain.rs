@@ -1,5 +1,6 @@
+use std::sync::{self, Arc};
+
 use anyhow::Result;
-use std::rc::{self, Rc};
 use vulkanalia::{
     vk::{self, DeviceV1_0, Handle, HasBuilder, KhrSurfaceExtension, KhrSwapchainExtension},
     Device, Instance,
@@ -72,7 +73,7 @@ fn get_swapchain_extent(window: &Window, capabilities: vk::SurfaceCapabilitiesKH
 
 #[derive(Default)]
 pub struct Swapchain {
-    device: rc::Weak<Device>,
+    device: sync::Weak<Device>,
 
     pub swapchain: vk::SwapchainKHR,
     pub format: vk::Format,
@@ -146,7 +147,7 @@ impl Swapchain {
             extent,
             images,
             image_views,
-            device: Rc::downgrade(&data.device),
+            device: Arc::downgrade(&data.device),
         })
     }
 }

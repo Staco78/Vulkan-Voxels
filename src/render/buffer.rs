@@ -9,14 +9,14 @@ use super::{memory::get_memory_type_index, renderer::RendererData};
 use std::{
     mem::size_of,
     ptr::copy_nonoverlapping,
-    rc::{self, Rc},
+    sync::{self, Arc},
 };
 
 pub struct Buffer {
-    device: rc::Weak<Device>,
+    device: sync::Weak<Device>,
     pub buffer: vk::Buffer,
     pub memory: vk::DeviceMemory,
-    current_map_ranges: Option<[vk::MappedMemoryRangeBuilder; 1]>,
+    current_map_ranges: Option<(u64, u64)>,
 }
 
 impl Buffer {
@@ -45,7 +45,7 @@ impl Buffer {
         data.device.bind_buffer_memory(buffer, memory, 0)?;
 
         Ok(Self {
-            device: Rc::downgrade(&data.device),
+            device: Arc::downgrade(&data.device),
             buffer,
             memory,
             current_map_ranges: None,
@@ -67,20 +67,20 @@ impl Buffer {
 
         let memory = device.map_memory(self.memory, offset, size, vk::MemoryMapFlags::empty())?;
 
-        self.current_map_ranges = Some([vk::MappedMemoryRange::builder()
-            .memory(self.memory)
-            .offset(offset)
-            .size(size)]);
+        self.current_map_ranges = Some((offset, size));
 
         Ok(memory.cast())
     }
 
     pub unsafe fn unmap(&mut self, device: &Device) -> Result<()> {
-        device.flush_mapped_memory_ranges(
-            &self
-                .current_map_ranges
-                .ok_or(anyhow!("Buffer not mapped"))?,
-        )?;
+        let map = self
+            .current_map_ranges
+            .ok_or(anyhow!("Buffer not mapped"))?;
+        let memory_ranges = &[vk::MappedMemoryRange::builder()
+            .memory(self.memory)
+            .offset(map.0)
+            .size(map.1)];
+        device.flush_mapped_memory_ranges(memory_ranges)?;
 
         device.unmap_memory(self.memory);
 

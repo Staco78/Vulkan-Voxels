@@ -8,5 +8,5 @@ pub const DEVICE_EXTENSIONS: &[vk::ExtensionName] = &[vk::KHR_SWAPCHAIN_EXTENSIO
 
 pub const MAX_FRAMES_IN_FLIGHT: usize = 30;
 
-pub const CHUNK_SIZE: usize = 10;
-pub const RENDER_DISTANCE: usize = 6;
+pub const CHUNK_SIZE: usize = 16;
+pub const RENDER_DISTANCE: usize = 10;

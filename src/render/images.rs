@@ -1,4 +1,4 @@
-use std::rc::{self, Rc};
+use std::sync::{self, Arc};
 
 use super::{memory::get_memory_type_index, renderer::RendererData};
 use anyhow::Result;
@@ -38,7 +38,7 @@ pub unsafe fn create_image_view(
 }
 
 pub struct Image {
-    device: rc::Weak<Device>,
+    device: sync::Weak<Device>,
     pub image: vk::Image,
     pub memory: vk::DeviceMemory,
     pub view: vk::ImageView,
@@ -88,7 +88,7 @@ impl Image {
             image,
             memory: image_memory,
             view,
-            device: Rc::downgrade(&data.device),
+            device: Arc::downgrade(&data.device),
         })
     }
 }

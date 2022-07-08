@@ -1,4 +1,7 @@
-use std::collections::HashMap;
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex, Weak},
+};
 
 use anyhow::Result;
 use nalgebra_glm::Vec3;
@@ -7,6 +10,7 @@ use vulkanalia::vk::DeviceV1_0;
 use crate::{
     config::{CHUNK_SIZE, RENDER_DISTANCE},
     render::renderer::RendererData,
+    threads::MeshingThreadPool,
 };
 
 use super::Chunk;
@@ -19,17 +23,24 @@ pub struct ChunkPos {
 }
 
 pub struct World {
-    pub chunks: HashMap<ChunkPos, Chunk>,
+    pub chunks: HashMap<ChunkPos, Arc<Mutex<Chunk>>>,
+    pub chunks_to_render: Vec<Weak<Mutex<Chunk>>>,
 }
 
 impl World {
     pub fn new() -> Self {
         Self {
             chunks: HashMap::new(),
+            chunks_to_render: Vec::new(),
         }
     }
 
-    fn update_visible_chunks(&mut self, data: &RendererData, player_pos: Vec3) -> Result<()> {
+    fn update_visible_chunks(
+        &mut self,
+        data: &RendererData,
+        meshing_pool: &MeshingThreadPool,
+        player_pos: Vec3,
+    ) -> Result<()> {
         let player_chunk_pos = ChunkPos {
             x: (player_pos.x / CHUNK_SIZE as f32).floor() as i32,
             y: (player_pos.y / CHUNK_SIZE as f32).floor() as u32,
@@ -71,19 +82,35 @@ impl World {
                 {
                     let pos = ChunkPos { x, y: y as u32, z };
                     if !self.chunks.contains_key(&pos) {
-                        let mut chunk = Chunk::new(pos)?;
-                        unsafe { chunk.mesh(data)? };
+                        let chunk = Chunk::new(pos)?;
+                        let chunk = Arc::new(Mutex::new(chunk));
+                        meshing_pool.mesh_thread(Arc::downgrade(&chunk));
                         self.chunks.insert(pos, chunk);
                     }
                 }
             }
         }
 
+        for recv_chunk in meshing_pool.try_iter() {
+            if let Some(chunk) = recv_chunk.upgrade() {
+                {
+                    let mut chunk = chunk.lock().unwrap();
+                    unsafe { chunk.finish_mesh(data)? };
+                }
+                self.chunks_to_render.push(recv_chunk);
+            }
+        }
+
         Ok(())
     }
 
-    pub fn tick(&mut self, data: &RendererData, player_pos: Vec3) -> Result<()> {
-        self.update_visible_chunks(data, player_pos)?;
+    pub fn tick(
+        &mut self,
+        data: &RendererData,
+        meshing_pool: &MeshingThreadPool,
+        player_pos: Vec3,
+    ) -> Result<()> {
+        self.update_visible_chunks(data, meshing_pool, player_pos)?;
 
         Ok(())
     }

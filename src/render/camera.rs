@@ -89,7 +89,7 @@ impl Camera {
         let right = dir.cross(&Vec3::y()).normalize();
         let up = Vec3::y();
 
-        let speed = 10. * dt;
+        let speed = 100. * dt;
 
         if inputs.is_key_pressed(winit::event::VirtualKeyCode::Z) {
             self.pos += dir * speed;
