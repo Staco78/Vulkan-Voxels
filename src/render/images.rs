@@ -1,6 +1,9 @@
 use std::sync::{self, Arc};
 
-use super::{memory::get_memory_type_index, renderer::RendererData};
+use super::{
+    memory::{AllocRequirements, AllocUsage, Allocator},
+    renderer::RendererData,
+};
 use anyhow::Result;
 use vulkanalia::{
     vk::{self, DeviceV1_0, HasBuilder},
@@ -39,6 +42,7 @@ pub unsafe fn create_image_view(
 
 pub struct Image {
     device: sync::Weak<Device>,
+    allocator: sync::Weak<Allocator>,
     pub image: vk::Image,
     pub memory: vk::DeviceMemory,
     pub view: vk::ImageView,
@@ -51,7 +55,6 @@ impl Image {
         format: vk::Format,
         tiling: vk::ImageTiling,
         usage: vk::ImageUsageFlags,
-        properties: vk::MemoryPropertyFlags,
         aspects: vk::ImageAspectFlags,
     ) -> Result<Self> {
         let info = vk::ImageCreateInfo::builder()
@@ -74,11 +77,10 @@ impl Image {
 
         let requirements = data.device.get_image_memory_requirements(image);
 
-        let info = vk::MemoryAllocateInfo::builder()
-            .allocation_size(requirements.size)
-            .memory_type_index(get_memory_type_index(data, properties, requirements)?);
-
-        let image_memory = data.device.allocate_memory(&info, None)?;
+        let image_memory = data.allocator.alloc(AllocRequirements::new(
+            requirements,
+            AllocUsage::DeviceLocal,
+        ))?;
 
         data.device.bind_image_memory(image, image_memory, 0)?;
 
@@ -86,6 +88,7 @@ impl Image {
 
         Ok(Self {
             image,
+            allocator: Arc::downgrade(&data.allocator),
             memory: image_memory,
             view,
             device: Arc::downgrade(&data.device),
@@ -98,7 +101,7 @@ impl Drop for Image {
         let device = self.device.upgrade().unwrap();
         unsafe {
             device.destroy_image_view(self.view, None);
-            device.free_memory(self.memory, None);
+            self.allocator.upgrade().unwrap().free(self.memory);
             device.destroy_image(self.image, None);
         }
     }

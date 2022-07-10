@@ -1,4 +1,8 @@
-use std::{marker::PhantomData, mem::size_of, sync::{self, Arc}};
+use std::{
+    marker::PhantomData,
+    mem::size_of,
+    sync::{self, Arc},
+};
 
 use super::{buffer::Buffer, renderer::RendererData};
 use anyhow::Result;

@@ -1,7 +1,5 @@
 use anyhow::{anyhow, Result};
-use vulkanalia::{
-    vk::{self, InstanceV1_0},
-};
+use vulkanalia::vk::{self, InstanceV1_0};
 
 use super::{images::Image, renderer::RendererData};
 
@@ -21,7 +19,6 @@ impl DepthBuffer {
                 get_depth_format(data)?,
                 vk::ImageTiling::OPTIMAL,
                 vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
-                vk::MemoryPropertyFlags::DEVICE_LOCAL,
                 vk::ImageAspectFlags::DEPTH,
             )?,
         })

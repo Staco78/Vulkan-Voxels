@@ -1,6 +1,7 @@
 use std::sync::{Arc, Mutex, Weak};
 
 use anyhow::{anyhow, Result};
+use log::debug;
 use nalgebra_glm as glm;
 use vulkanalia::{
     self,
@@ -9,11 +10,7 @@ use vulkanalia::{
 };
 use winit::window::Window;
 
-use crate::{
-    config::MAX_FRAMES_IN_FLIGHT,
-    inputs::Inputs,
-    world::{Chunk, World},
-};
+use crate::{config::MAX_FRAMES_IN_FLIGHT, inputs::Inputs, world::Chunk};
 
 use super::{
     camera::Camera,
@@ -21,7 +18,9 @@ use super::{
     depth::DepthBuffer,
     device,
     framebuffers::Framebuffers,
-    instance, physical_device,
+    instance,
+    memory::Allocator,
+    physical_device,
     pipeline::Pipeline,
     swapchain::Swapchain,
     sync,
@@ -42,14 +41,15 @@ pub struct Renderer {
 }
 
 impl Renderer {
-    pub unsafe fn new(window: &Window, entry: &Entry) -> Result<Self> {
-        let (instance, messenger) = instance::create(window, entry)?;
-        let surface = vulkanalia::window::create_surface(&instance, window)?;
-        let physical_device = physical_device::pick(&instance, surface)?;
+    pub unsafe fn new(window: &Window, entry: &Entry) -> Self {
+        let (instance, messenger) = instance::create(window, entry).unwrap();
+        let surface = vulkanalia::window::create_surface(&instance, window).unwrap();
+        let physical_device = physical_device::pick(&instance, surface).unwrap();
         let (device, graphics_queue, present_queue) =
-            device::create(&instance, surface, physical_device)?;
-
+            device::create(&instance, surface, physical_device).unwrap();
         let device = Arc::new(device);
+
+        let allocator = Arc::new(Allocator::new(&device, &instance, physical_device));
 
         let mut data = RendererData::new(
             instance,
@@ -59,14 +59,15 @@ impl Renderer {
             device,
             graphics_queue,
             present_queue,
+            allocator,
         );
 
-        data.swapchain = Some(Swapchain::create(window, &data)?);
-        data.uniforms = Some(Uniforms::create(&data)?);
-        data.depth_buffer = Some(DepthBuffer::create(&data)?);
-        data.pipeline = Some(Pipeline::create(&data)?);
-        data.framebuffers = Some(Framebuffers::create(&data)?);
-        data.command_pool = Some(CommandPool::create(&data)?);
+        data.swapchain = Some(Swapchain::create(window, &data).unwrap());
+        data.uniforms = Some(Uniforms::create(&data).unwrap());
+        data.depth_buffer = Some(DepthBuffer::create(&data).unwrap());
+        data.pipeline = Some(Pipeline::create(&data).unwrap());
+        data.framebuffers = Some(Framebuffers::create(&data).unwrap());
+        data.command_pool = Some(CommandPool::create(&data).unwrap());
         data.command_buffers = data
             .command_pool
             .as_mut()
@@ -74,9 +75,10 @@ impl Renderer {
             .allocate_command_buffers(
                 &data.device,
                 data.swapchain.as_ref().unwrap().images.len() as u32,
-            )?;
+            )
+            .unwrap();
 
-        let camera = Camera::new(&mut data)?;
+        let camera = Camera::new(&mut data).unwrap();
 
         let mut r = Self {
             data,
@@ -87,7 +89,7 @@ impl Renderer {
 
         r.create_sync_objects().unwrap();
 
-        Ok(r)
+        r
     }
 
     unsafe fn create_sync_objects(&mut self) -> Result<()> {
@@ -131,94 +133,97 @@ impl Renderer {
         Ok(())
     }
 
-    pub unsafe fn record_commands(&mut self, chunks: &mut Vec<Weak<Mutex<Chunk>>>) -> Result<()> {
-        self.data.device.device_wait_idle()?;
-        self.data
-            .command_pool
-            .as_mut()
-            .unwrap()
-            .reset(&self.data.device)?;
-        for (i, command_buffer) in self.data.command_buffers.iter_mut().enumerate() {
-            command_buffer.begin(&self.data.device)?;
+    pub unsafe fn record_commands(
+        &mut self,
+        chunks: &mut Vec<Weak<Mutex<Chunk>>>,
+        image_index: usize,
+    ) -> Result<()> {
+        let t = std::time::Instant::now();
+        debug!("Recording commands");
 
-            let render_area = vk::Rect2D::builder()
-                .offset(vk::Offset2D::default())
-                .extent(self.data.swapchain.as_ref().unwrap().extent);
+        let command_buffer = &mut self.data.command_buffers[image_index];
 
-            let color_clear_value = vk::ClearValue {
-                color: vk::ClearColorValue {
-                    float32: [0.0, 0.0, 0.0, 1.0],
-                },
-            };
+        command_buffer.begin(&self.data.device)?;
 
-            let depth_clear_value = vk::ClearValue {
-                depth_stencil: vk::ClearDepthStencilValue {
-                    depth: 1.0,
-                    stencil: 0,
-                },
-            };
+        let render_area = vk::Rect2D::builder()
+            .offset(vk::Offset2D::default())
+            .extent(self.data.swapchain.as_ref().unwrap().extent);
 
-            let clear_values = &[color_clear_value, depth_clear_value];
-            let info = vk::RenderPassBeginInfo::builder()
-                .render_pass(self.data.pipeline.as_ref().unwrap().render_pass)
-                .framebuffer(self.data.framebuffers.as_ref().unwrap()[i])
-                .render_area(render_area)
-                .clear_values(clear_values);
+        let color_clear_value = vk::ClearValue {
+            color: vk::ClearColorValue {
+                float32: [0.0, 0.0, 0.0, 1.0],
+            },
+        };
 
-            self.data.device.cmd_begin_render_pass(
-                command_buffer.buffer,
-                &info,
-                vk::SubpassContents::INLINE,
-            );
-            self.data.device.cmd_bind_pipeline(
-                command_buffer.buffer,
-                vk::PipelineBindPoint::GRAPHICS,
-                self.data.pipeline.as_ref().unwrap().pipeline,
-            );
+        let depth_clear_value = vk::ClearValue {
+            depth_stencil: vk::ClearDepthStencilValue {
+                depth: 1.0,
+                stencil: 0,
+            },
+        };
 
-            self.data.device.cmd_bind_descriptor_sets(
-                command_buffer.buffer,
-                vk::PipelineBindPoint::GRAPHICS,
-                self.data.pipeline.as_ref().unwrap().layout,
-                0,
-                &[self.data.uniforms.as_ref().unwrap().descriptor_sets[i]],
-                &[],
-            );
+        let clear_values = &[color_clear_value, depth_clear_value];
+        let info = vk::RenderPassBeginInfo::builder()
+            .render_pass(self.data.pipeline.as_ref().unwrap().render_pass)
+            .framebuffer(self.data.framebuffers.as_ref().unwrap()[image_index])
+            .render_area(render_area)
+            .clear_values(clear_values);
 
-            let mut to_remove = Vec::new();
+        self.data.device.cmd_begin_render_pass(
+            command_buffer.buffer,
+            &info,
+            vk::SubpassContents::INLINE,
+        );
+        self.data.device.cmd_bind_pipeline(
+            command_buffer.buffer,
+            vk::PipelineBindPoint::GRAPHICS,
+            self.data.pipeline.as_ref().unwrap().pipeline,
+        );
 
-            for (i, chunk) in chunks.iter().enumerate() {
-                if let Some(chunk) = chunk.upgrade() {
-                    let chunk = chunk.lock().unwrap();
-                    self.data.device.cmd_bind_vertex_buffers(
-                        command_buffer.buffer,
-                        0,
-                        &[chunk.vertex_buffer.as_ref().unwrap().buffer],
-                        &[0],
-                    );
+        self.data.device.cmd_bind_descriptor_sets(
+            command_buffer.buffer,
+            vk::PipelineBindPoint::GRAPHICS,
+            self.data.pipeline.as_ref().unwrap().layout,
+            0,
+            &[self.data.uniforms.as_ref().unwrap().descriptor_sets[image_index]],
+            &[],
+        );
 
-                    self.data.device.cmd_draw(
-                        command_buffer.buffer,
-                        chunk.vertices_len as u32,
-                        1,
-                        0,
-                        0,
-                    );
-                } else {
-                    to_remove.push(i);
-                }
+        let mut to_remove = Vec::new();
+
+        for (i, chunk) in chunks.iter().enumerate() {
+            if let Some(chunk) = chunk.upgrade() {
+                let chunk = chunk.lock().unwrap();
+                self.data.device.cmd_bind_vertex_buffers(
+                    command_buffer.buffer,
+                    0,
+                    &[chunk.vertex_buffer.as_ref().unwrap().buffer],
+                    &[0],
+                );
+
+                self.data.device.cmd_draw(
+                    command_buffer.buffer,
+                    chunk.vertices_len as u32,
+                    1,
+                    0,
+                    0,
+                );
+            } else {
+                to_remove.push(i);
             }
-
-            to_remove.reverse();
-
-            for i in to_remove {
-                chunks.swap_remove(i);
-            }
-
-            self.data.device.cmd_end_render_pass(command_buffer.buffer);
-
-            command_buffer.end(&self.data.device)?;
         }
+
+        to_remove.reverse();
+
+        for i in to_remove {
+            chunks.swap_remove(i);
+        }
+
+        self.data.device.cmd_end_render_pass(command_buffer.buffer);
+
+        command_buffer.end(&self.data.device)?;
+
+        debug!("Recording commands took {:?}", t.elapsed());
         Ok(())
     }
 
@@ -227,7 +232,15 @@ impl Renderer {
         Ok(())
     }
 
-    pub unsafe fn render(&mut self, window: &Window, world: &mut World, _dt: f32) -> Result<()> {
+    pub unsafe fn render(
+        &mut self,
+        window: &Window,
+        chunks: &mut Vec<Weak<Mutex<Chunk>>>,
+        _dt: f32,
+    ) -> Result<()> {
+        let t = std::time::Instant::now();
+        debug!("Rendering");
+
         self.data.device.wait_for_fences(
             &[self.data.in_flight_fences[self.frame]],
             true,
@@ -243,7 +256,7 @@ impl Renderer {
 
         let image_index = match result {
             Ok((image_index, _)) => image_index as usize,
-            Err(vk::ErrorCode::OUT_OF_DATE_KHR) => return self.recreate_swapchain(window, world),
+            Err(vk::ErrorCode::OUT_OF_DATE_KHR) => return self.recreate_swapchain(window),
             Err(e) => return Err(anyhow!(e)),
         };
 
@@ -258,6 +271,7 @@ impl Renderer {
         self.data.images_in_flight[image_index as usize] = self.data.in_flight_fences[self.frame];
 
         self.camera.send(&mut self.data, image_index)?;
+        self.record_commands(chunks, image_index)?;
 
         let wait_semaphores = &[self.data.image_available_semaphore[self.frame]];
         let wait_stages = &[vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
@@ -295,7 +309,7 @@ impl Renderer {
             || result == Err(vk::ErrorCode::OUT_OF_DATE_KHR);
 
         if changed || self.resized {
-            self.recreate_swapchain(window, world)?;
+            self.recreate_swapchain(window)?;
             self.resized = false;
         } else if let Err(e) = result {
             return Err(anyhow!(e));
@@ -303,11 +317,15 @@ impl Renderer {
 
         self.frame = (self.frame + 1) % MAX_FRAMES_IN_FLIGHT;
 
+        debug!("Rendering took {:?}", t.elapsed());
+
         Ok(())
     }
 
-    pub unsafe fn recreate_swapchain(&mut self, window: &Window, world: &mut World) -> Result<()> {
+    pub unsafe fn recreate_swapchain(&mut self, window: &Window) -> Result<()> {
         self.data.device.device_wait_idle()?;
+
+        println!("Recreating swapchain");
 
         self.data.uniforms = None;
         self.data.depth_buffer = None;
@@ -326,8 +344,8 @@ impl Renderer {
         self.data.swapchain = None;
 
         self.data.swapchain = Some(Swapchain::create(window, &self.data)?);
-        self.data.uniforms = Some(Uniforms::create(&self.data)?);
-        self.data.depth_buffer = Some(DepthBuffer::create(&self.data)?);
+        self.data.uniforms = Some(Uniforms::create(&mut self.data)?);
+        self.data.depth_buffer = Some(DepthBuffer::create(&mut self.data)?);
         self.data.pipeline = Some(Pipeline::create(&self.data)?);
         self.data.framebuffers = Some(Framebuffers::create(&self.data)?);
         self.data.command_buffers = self
@@ -343,7 +361,6 @@ impl Renderer {
             self.data.swapchain.as_ref().unwrap().images.len(),
             vk::Fence::null(),
         );
-        self.record_commands(&mut world.chunks_to_render)?;
         self.camera.update_projection(&self.data);
         self.camera.send_all(&mut self.data)?;
 
@@ -384,6 +401,7 @@ pub struct RendererData {
     pub device: Arc<Device>,
     pub graphics_queue: vk::Queue,
     pub present_queue: vk::Queue,
+    pub allocator: Arc<Allocator>,
     pub swapchain: Option<Swapchain>,
     pub pipeline: Option<Pipeline>,
     pub framebuffers: Option<Framebuffers>,
@@ -406,6 +424,7 @@ impl RendererData {
         device: Arc<Device>,
         graphics_queue: vk::Queue,
         present_queue: vk::Queue,
+        allocator: Arc<Allocator>,
     ) -> Self {
         Self {
             instance,
@@ -415,6 +434,7 @@ impl RendererData {
             device,
             graphics_queue,
             present_queue,
+            allocator,
             swapchain: None,
             pipeline: None,
             framebuffers: None,

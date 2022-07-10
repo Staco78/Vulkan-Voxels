@@ -2,13 +2,17 @@ use anyhow::Result;
 use std::collections::HashSet;
 use std::sync::Arc;
 use vulkanalia::vk::{DeviceV1_0, HasBuilder};
-use vulkanalia::{vk, Instance, Device};
+use vulkanalia::{vk, Device, Instance};
 
 use crate::config::{DEVICE_EXTENSIONS, VALIDATION_ENABLED, VALIDATION_LAYER};
 
 use super::queue::QueueFamilyIndices;
 
-pub unsafe fn create(instance: &Instance, surface: vk::SurfaceKHR, physical_device: vk::PhysicalDevice) -> Result<(vulkanalia::Device, vk::Queue, vk::Queue)> {
+pub unsafe fn create(
+    instance: &Instance,
+    surface: vk::SurfaceKHR,
+    physical_device: vk::PhysicalDevice,
+) -> Result<(vulkanalia::Device, vk::Queue, vk::Queue)> {
     let indices = QueueFamilyIndices::get(instance, surface, physical_device)?;
 
     let mut unique_indices = HashSet::new();

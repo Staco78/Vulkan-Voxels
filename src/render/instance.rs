@@ -108,7 +108,8 @@ pub fn create(
 
 pub unsafe fn destroy(data: &mut RendererData) {
     if let Some(messenger) = data.messenger {
-        data.instance.destroy_debug_utils_messenger_ext(messenger, None);
+        data.instance
+            .destroy_debug_utils_messenger_ext(messenger, None);
     }
     data.instance.destroy_instance(None);
 }

@@ -20,7 +20,10 @@ impl CommandPool {
 
         let info = vk::CommandPoolCreateInfo::builder()
             .queue_family_index(indices.graphics)
-            .flags(vk::CommandPoolCreateFlags::empty());
+            .flags(
+                vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER
+                    | vk::CommandPoolCreateFlags::TRANSIENT,
+            );
 
         let pool = data.device.create_command_pool(&info, None)?;
 
@@ -50,11 +53,10 @@ impl CommandPool {
         Ok(buffers)
     }
 
-    pub unsafe fn reset(&mut self, device: &Device) -> Result<()> {
-        device.reset_command_pool(self.pool, vk::CommandPoolResetFlags::empty())?;
-
-        Ok(())
-    }
+    // pub unsafe fn reset(&mut self, device: &Device) -> Result<()> {
+    //     device.reset_command_pool(self.pool, vk::CommandPoolResetFlags::empty())?;
+    //     Ok(())
+    // }
 }
 
 impl Drop for CommandPool {
@@ -75,7 +77,8 @@ pub struct CommandBuffer {
 impl CommandBuffer {
     #[inline]
     pub unsafe fn begin(&mut self, device: &Device) -> Result<()> {
-        let info = vk::CommandBufferBeginInfo::builder();
+        let info = vk::CommandBufferBeginInfo::builder()
+            .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
         device.begin_command_buffer(self.buffer, &info)?;
         Ok(())
     }

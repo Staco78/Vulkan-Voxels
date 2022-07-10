@@ -4,7 +4,10 @@ use vulkanalia::{
     Device,
 };
 
-use super::{memory::get_memory_type_index, renderer::RendererData};
+use super::{
+    memory::{AllocRequirements, AllocUsage, Allocator},
+    renderer::RendererData,
+};
 
 use std::{
     mem::size_of,
@@ -14,6 +17,7 @@ use std::{
 
 pub struct Buffer {
     device: sync::Weak<Device>,
+    allocator: sync::Weak<Allocator>,
     pub buffer: vk::Buffer,
     pub memory: vk::DeviceMemory,
     current_map_ranges: Option<(u64, u64)>,
@@ -32,20 +36,16 @@ impl Buffer {
 
         let memory_requirements = data.device.get_buffer_memory_requirements(buffer);
 
-        let memory_info = vk::MemoryAllocateInfo::builder()
-            .allocation_size(memory_requirements.size)
-            .memory_type_index(get_memory_type_index(
-                data,
-                vk::MemoryPropertyFlags::HOST_VISIBLE,
-                memory_requirements,
-            )?);
-
-        let memory = data.device.allocate_memory(&memory_info, None)?;
+        let memory = data.allocator.alloc(AllocRequirements::new(
+            memory_requirements,
+            AllocUsage::Staging,
+        ))?;
 
         data.device.bind_buffer_memory(buffer, memory, 0)?;
 
         Ok(Self {
             device: Arc::downgrade(&data.device),
+            allocator: Arc::downgrade(&data.allocator),
             buffer,
             memory,
             current_map_ranges: None,
@@ -75,7 +75,7 @@ impl Buffer {
     pub unsafe fn unmap(&mut self, device: &Device) -> Result<()> {
         let map = self
             .current_map_ranges
-            .ok_or(anyhow!("Buffer not mapped"))?;
+            .ok_or_else(|| anyhow!("Buffer not mapped"))?;
         let memory_ranges = &[vk::MappedMemoryRange::builder()
             .memory(self.memory)
             .offset(map.0)
@@ -95,7 +95,7 @@ impl Drop for Buffer {
         let device = self.device.upgrade().unwrap();
         unsafe {
             device.destroy_buffer(self.buffer, None);
-            device.free_memory(self.memory, None);
+            self.allocator.upgrade().unwrap().free(self.memory);
         }
     }
 }

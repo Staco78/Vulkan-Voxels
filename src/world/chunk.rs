@@ -37,7 +37,7 @@ impl Chunk {
 
         for x in 0..CHUNK_SIZE {
             for y in 0..CHUNK_SIZE {
-                let height = (x as i32 - y as i32).abs() as usize;
+                let height = (x as i32 - y as i32).unsigned_abs() as usize;
                 assert!(height < CHUNK_SIZE);
                 for z in 0..height {
                     c.blocks[x * CHUNK_SIZE * CHUNK_SIZE + y * CHUNK_SIZE + z].id = 1;
@@ -108,9 +108,9 @@ impl Chunk {
             pos: TVec3<i32>,
             light_modifier: u8,
         ) {
-            for i in 0..6 {
+            for vert in face.iter().take(6) {
                 let v = Vertex {
-                    pos: pos + vec3(face[i][0], face[i][1], face[i][2]),
+                    pos: pos + vec3(vert[0], vert[1], vert[2]),
                     color: vec3(1., 1., 1.),
                     light_modifier,
                 };
@@ -133,19 +133,19 @@ impl Chunk {
                         {
                             emit_face(&BACK, &mut self.vertices, pos, 8);
                         }
-                        if x <= 0 || self.blocks[index - CHUNK_SIZE * CHUNK_SIZE].id == 0 {
+                        if x == 0 || self.blocks[index - CHUNK_SIZE * CHUNK_SIZE].id == 0 {
                             emit_face(&FRONT, &mut self.vertices, pos, 8);
                         }
                         if z >= CHUNK_SIZE - 1 || self.blocks[index + 1].id == 0 {
                             emit_face(&RIGHT, &mut self.vertices, pos, 6);
                         }
-                        if z <= 0 || self.blocks[index - 1].id == 0 {
+                        if z == 0 || self.blocks[index - 1].id == 0 {
                             emit_face(&LEFT, &mut self.vertices, pos, 6);
                         }
                         if y >= CHUNK_SIZE - 1 || self.blocks[index + CHUNK_SIZE].id == 0 {
                             emit_face(&UP, &mut self.vertices, pos, 10);
                         }
-                        if y <= 0 || self.blocks[index - CHUNK_SIZE].id == 0 {
+                        if y == 0 || self.blocks[index - CHUNK_SIZE].id == 0 {
                             emit_face(&DOWN, &mut self.vertices, pos, 5);
                         }
                     }
@@ -156,9 +156,9 @@ impl Chunk {
         Ok(())
     }
 
-    pub unsafe fn finish_mesh(&mut self, renderer_data: &RendererData) -> Result<()> {
+    pub unsafe fn finish_mesh(&mut self, renderer_data: &mut RendererData) -> Result<()> {
         trace!("Finish mesh chunk {:?}", self.pos);
-        
+
         self.vertex_buffer = Some(Buffer::create(
             renderer_data,
             self.vertices.len() * size_of::<Vertex>(),

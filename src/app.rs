@@ -13,7 +13,7 @@ pub struct App {
 
 impl App {
     pub fn create(window: &Window, entry: &Entry) -> Result<Self> {
-        let renderer = unsafe { Renderer::new(window, entry)? };
+        let renderer = unsafe { Renderer::new(window, entry) };
         let world = World::new();
         let mut thread_pool = MeshingThreadPool::new();
         thread_pool.start_threads(4);
@@ -27,11 +27,10 @@ impl App {
 
     pub fn tick(&mut self) -> Result<()> {
         self.world.tick(
-            &self.renderer.data,
+            &mut self.renderer.data,
             &self.meshing_threads,
             self.renderer.camera.pos,
         )?;
-        unsafe { self.renderer.record_commands(&mut self.world.chunks_to_render)? };
         Ok(())
     }
 
@@ -41,7 +40,8 @@ impl App {
 
     pub fn render(&mut self, window: &Window, dt: f32) -> Result<()> {
         unsafe {
-            self.renderer.render(window, &mut self.world, dt)?;
+            self.renderer
+                .render(window, &mut self.world.chunks_to_render, dt)?;
         }
         Ok(())
     }

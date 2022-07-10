@@ -42,24 +42,25 @@ impl Camera {
         Ok(cam)
     }
 
-    pub unsafe fn send_all(&self,  data: &mut RendererData) -> Result<()> {
+    pub unsafe fn send_all(&self, data: &mut RendererData) -> Result<()> {
         let ubo = UniformBufferObject {
             view: self.view,
             proj: self.proj,
         };
 
-        data.uniforms.as_mut().unwrap().buffers.iter_mut().for_each(|b| {
-            b.fill(&data.device, &ubo, 1).unwrap();
-        });
+        data.uniforms
+            .as_mut()
+            .unwrap()
+            .buffers
+            .iter_mut()
+            .for_each(|b| {
+                b.fill(&data.device, &ubo, 1).unwrap();
+            });
 
         Ok(())
     }
 
-    pub unsafe fn send(
-        &self,
-        data: &mut RendererData,
-        image_index: usize,
-    ) -> Result<()> {
+    pub unsafe fn send(&self, data: &mut RendererData, image_index: usize) -> Result<()> {
         let ptr = data.uniforms.as_mut().unwrap().buffers[image_index].map(
             &data.device,
             0,
@@ -125,7 +126,8 @@ impl Camera {
 
     pub fn update_projection(&mut self, data: &RendererData) {
         self.proj = glm::perspective_rh_zo(
-            data.swapchain.as_ref().unwrap().extent.width as f32 / data.swapchain.as_ref().unwrap().extent.height as f32,
+            data.swapchain.as_ref().unwrap().extent.width as f32
+                / data.swapchain.as_ref().unwrap().extent.height as f32,
             self.fov.to_radians(),
             self.near,
             self.far,

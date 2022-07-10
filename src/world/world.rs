@@ -37,7 +37,7 @@ impl World {
 
     fn update_visible_chunks(
         &mut self,
-        data: &RendererData,
+        data: &mut RendererData,
         meshing_pool: &MeshingThreadPool,
         player_pos: Vec3,
     ) -> Result<()> {
@@ -81,11 +81,11 @@ impl World {
                     ..(player_chunk_pos.z + RENDER_DISTANCE as i32)
                 {
                     let pos = ChunkPos { x, y: y as u32, z };
-                    if !self.chunks.contains_key(&pos) {
+                    if let std::collections::hash_map::Entry::Vacant(e) = self.chunks.entry(pos) {
                         let chunk = Chunk::new(pos)?;
                         let chunk = Arc::new(Mutex::new(chunk));
                         meshing_pool.mesh_thread(Arc::downgrade(&chunk));
-                        self.chunks.insert(pos, chunk);
+                        e.insert(chunk);
                     }
                 }
             }
@@ -106,7 +106,7 @@ impl World {
 
     pub fn tick(
         &mut self,
-        data: &RendererData,
+        data: &mut RendererData,
         meshing_pool: &MeshingThreadPool,
         player_pos: Vec3,
     ) -> Result<()> {

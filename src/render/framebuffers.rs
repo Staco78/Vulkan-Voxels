@@ -1,4 +1,3 @@
-
 use std::sync::{self, Arc};
 
 use anyhow::Result;
@@ -8,7 +7,6 @@ use vulkanalia::{
 };
 
 use super::renderer::RendererData;
-
 
 pub struct Framebuffers {
     device: sync::Weak<Device>,

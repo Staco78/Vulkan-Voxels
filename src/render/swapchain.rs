@@ -83,10 +83,7 @@ pub struct Swapchain {
 }
 
 impl Swapchain {
-    pub unsafe fn create(
-        window: &Window,
-        data: &RendererData
-    ) -> Result<Self> {
+    pub unsafe fn create(window: &Window, data: &RendererData) -> Result<Self> {
         let indices = QueueFamilyIndices::get(&data.instance, data.surface, data.physical_device)?;
         let support = SwapchainSupport::get(&data.instance, data.surface, data.physical_device)?;
 
