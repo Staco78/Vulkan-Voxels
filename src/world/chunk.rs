@@ -1,4 +1,4 @@
-use std::mem::size_of;
+use std::{fmt::Debug, mem::size_of};
 
 use anyhow::Result;
 use log::trace;
@@ -12,7 +12,7 @@ use crate::{
 
 use super::world::ChunkPos;
 
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 pub struct Block {
     id: u16,
 }
@@ -23,6 +23,18 @@ pub struct Chunk {
     pub vertex_buffer: Option<Buffer>,
     pub vertices: Vec<Vertex>,
     pub vertices_len: usize,
+}
+
+impl Debug for Chunk {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // write!(f, "Chunk {{ pos: {:?}, vertex_buffer: {:?}, vertices: {:?}, vertices_len: {:?} }}", self.pos, self.vertex_buffer, self.vertices, self.vertices_len)
+        f.debug_struct("Chunk")
+            .field("pos", &self.pos)
+            .field("vertex_buffer", &self.vertex_buffer)
+            .field("vertices", &self.vertices)
+            .field("vertices_len", &self.vertices_len)
+            .finish()
+    }
 }
 
 impl Chunk {

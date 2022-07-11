@@ -1,7 +1,7 @@
 use std::sync::{self, Arc};
 
 use super::{
-    memory::{AllocRequirements, AllocUsage, Allocator},
+    memory::{AllocRequirements, AllocUsage, Allocator, Block},
     renderer::RendererData,
 };
 use anyhow::Result;
@@ -44,7 +44,7 @@ pub struct Image {
     device: sync::Weak<Device>,
     allocator: sync::Weak<Allocator>,
     pub image: vk::Image,
-    pub memory: vk::DeviceMemory,
+    pub alloc: Block,
     pub view: vk::ImageView,
 }
 
@@ -77,19 +77,20 @@ impl Image {
 
         let requirements = data.device.get_image_memory_requirements(image);
 
-        let image_memory = data.allocator.alloc(AllocRequirements::new(
+        let alloc = data.allocator.alloc(AllocRequirements::new(
             requirements,
             AllocUsage::DeviceLocal,
         ))?;
 
-        data.device.bind_image_memory(image, image_memory, 0)?;
+        data.device
+            .bind_image_memory(image, alloc.memory, alloc.offset)?;
 
         let view = create_image_view(&data.device, image, format, aspects, 1)?;
 
         Ok(Self {
             image,
             allocator: Arc::downgrade(&data.allocator),
-            memory: image_memory,
+            alloc,
             view,
             device: Arc::downgrade(&data.device),
         })
@@ -101,7 +102,7 @@ impl Drop for Image {
         let device = self.device.upgrade().unwrap();
         unsafe {
             device.destroy_image_view(self.view, None);
-            self.allocator.upgrade().unwrap().free(self.memory);
+            self.allocator.upgrade().unwrap().free(self.alloc);
             device.destroy_image(self.image, None);
         }
     }

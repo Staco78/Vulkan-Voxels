@@ -325,8 +325,6 @@ impl Renderer {
     pub unsafe fn recreate_swapchain(&mut self, window: &Window) -> Result<()> {
         self.data.device.device_wait_idle()?;
 
-        println!("Recreating swapchain");
-
         self.data.uniforms = None;
         self.data.depth_buffer = None;
         self.data.framebuffers = None;
@@ -344,8 +342,8 @@ impl Renderer {
         self.data.swapchain = None;
 
         self.data.swapchain = Some(Swapchain::create(window, &self.data)?);
-        self.data.uniforms = Some(Uniforms::create(&mut self.data)?);
-        self.data.depth_buffer = Some(DepthBuffer::create(&mut self.data)?);
+        self.data.uniforms = Some(Uniforms::create(&self.data)?);
+        self.data.depth_buffer = Some(DepthBuffer::create(&self.data)?);
         self.data.pipeline = Some(Pipeline::create(&self.data)?);
         self.data.framebuffers = Some(Framebuffers::create(&self.data)?);
         self.data.command_buffers = self
@@ -381,6 +379,8 @@ impl Drop for Renderer {
             self.data.command_pool = None;
             self.data.pipeline = None;
             self.data.swapchain = None;
+
+            Arc::get_mut(&mut self.data.allocator).unwrap().free_all();
 
             self.destroy_sync_objects().unwrap();
 

@@ -5,7 +5,7 @@ use vulkanalia::{
 };
 
 use super::{
-    memory::{AllocRequirements, AllocUsage, Allocator},
+    memory::{AllocRequirements, AllocUsage, Allocator, Block},
     renderer::RendererData,
 };
 
@@ -15,11 +15,12 @@ use std::{
     sync::{self, Arc},
 };
 
+#[derive(Debug)]
 pub struct Buffer {
     device: sync::Weak<Device>,
     allocator: sync::Weak<Allocator>,
     pub buffer: vk::Buffer,
-    pub memory: vk::DeviceMemory,
+    pub alloc: Block,
     current_map_ranges: Option<(u64, u64)>,
 }
 
@@ -36,18 +37,19 @@ impl Buffer {
 
         let memory_requirements = data.device.get_buffer_memory_requirements(buffer);
 
-        let memory = data.allocator.alloc(AllocRequirements::new(
+        let alloc = data.allocator.alloc(AllocRequirements::new(
             memory_requirements,
             AllocUsage::Staging,
         ))?;
 
-        data.device.bind_buffer_memory(buffer, memory, 0)?;
+        data.device
+            .bind_buffer_memory(buffer, alloc.memory, alloc.offset)?;
 
         Ok(Self {
             device: Arc::downgrade(&data.device),
             allocator: Arc::downgrade(&data.allocator),
             buffer,
-            memory,
+            alloc,
             current_map_ranges: None,
         })
     }
@@ -64,8 +66,14 @@ impl Buffer {
 
     pub unsafe fn map<T>(&mut self, device: &Device, offset: u64, size: u64) -> Result<*mut T> {
         assert!(self.current_map_ranges.is_none());
+        assert!(size <= self.alloc.size);
 
-        let memory = device.map_memory(self.memory, offset, size, vk::MemoryMapFlags::empty())?;
+        let memory = device.map_memory(
+            self.alloc.memory,
+            self.alloc.offset + offset,
+            size,
+            vk::MemoryMapFlags::empty(),
+        )?;
 
         self.current_map_ranges = Some((offset, size));
 
@@ -77,12 +85,12 @@ impl Buffer {
             .current_map_ranges
             .ok_or_else(|| anyhow!("Buffer not mapped"))?;
         let memory_ranges = &[vk::MappedMemoryRange::builder()
-            .memory(self.memory)
-            .offset(map.0)
+            .memory(self.alloc.memory)
+            .offset(self.alloc.offset + map.0)
             .size(map.1)];
         device.flush_mapped_memory_ranges(memory_ranges)?;
 
-        device.unmap_memory(self.memory);
+        device.unmap_memory(self.alloc.memory);
 
         self.current_map_ranges = None;
 
@@ -95,7 +103,7 @@ impl Drop for Buffer {
         let device = self.device.upgrade().unwrap();
         unsafe {
             device.destroy_buffer(self.buffer, None);
-            self.allocator.upgrade().unwrap().free(self.memory);
+            self.allocator.upgrade().unwrap().free(self.alloc);
         }
     }
 }
