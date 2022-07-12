@@ -6,7 +6,7 @@ use vulkanalia::{
 
 use std::sync::{self, Arc};
 
-use super::{queue, renderer::RendererData};
+use super::renderer::RendererData;
 
 pub struct CommandPool {
     device: sync::Weak<Device>,
@@ -14,12 +14,9 @@ pub struct CommandPool {
 }
 
 impl CommandPool {
-    pub unsafe fn create(data: &RendererData) -> Result<Self> {
-        let indices =
-            queue::QueueFamilyIndices::get(&data.instance, data.surface, data.physical_device)?;
-
+    pub unsafe fn create(data: &RendererData, queue_family: u32) -> Result<Self> {
         let info = vk::CommandPoolCreateInfo::builder()
-            .queue_family_index(indices.graphics)
+            .queue_family_index(queue_family)
             .flags(
                 vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER
                     | vk::CommandPoolCreateFlags::TRANSIENT,
@@ -34,7 +31,7 @@ impl CommandPool {
     }
 
     pub unsafe fn allocate_command_buffers(
-        &mut self,
+        &self,
         device: &Device,
         count: u32,
     ) -> Result<Vec<CommandBuffer>> {
@@ -70,6 +67,7 @@ impl Drop for CommandPool {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
 pub struct CommandBuffer {
     pub buffer: vk::CommandBuffer,
 }

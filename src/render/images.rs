@@ -77,7 +77,7 @@ impl Image {
 
         let requirements = data.device.get_image_memory_requirements(image);
 
-        let alloc = data.allocator.alloc(AllocRequirements::new(
+        let (alloc, _) = data.allocator.alloc(AllocRequirements::new(
             requirements,
             AllocUsage::DeviceLocal,
         ))?;

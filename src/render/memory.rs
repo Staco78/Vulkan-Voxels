@@ -1,6 +1,9 @@
-use std::sync::{
-    atomic::{AtomicU64, Ordering},
-    Arc, RwLock, Weak,
+use std::{
+    ptr,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc, RwLock, Weak,
+    },
 };
 
 use anyhow::{anyhow, Result};
@@ -10,7 +13,7 @@ use vulkanalia::{
     Device, Instance,
 };
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub enum AllocUsage {
     Staging,
     DeviceLocal,
@@ -67,7 +70,7 @@ impl Allocator {
         usage: AllocUsage,
     ) -> vk::MemoryPropertyFlags {
         match usage {
-            AllocUsage::Staging => vk::MemoryPropertyFlags::HOST_VISIBLE,
+            AllocUsage::Staging => vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
             AllocUsage::DeviceLocal => vk::MemoryPropertyFlags::DEVICE_LOCAL,
         }
     }
@@ -86,7 +89,7 @@ impl Allocator {
             .ok_or_else(|| anyhow!("Failed to find suitable memory type."))
     }
 
-    pub unsafe fn alloc(&self, requirements: AllocRequirements) -> Result<Block> {
+    pub unsafe fn alloc(&self, requirements: AllocRequirements) -> Result<(Block, *mut u8)> {
         let properties =
             Allocator::get_memory_properties(self.memory_properties, requirements.usage);
         let memory_type_index = Allocator::get_memory_type_index(
@@ -100,7 +103,7 @@ impl Allocator {
         )?;
 
         let pool = &self.pools[memory_type_index as usize];
-        pool.alloc(requirements.size, requirements.alignment)
+        pool.alloc(requirements.size, requirements.alignment, requirements.usage == AllocUsage::Staging)
     }
 
     pub unsafe fn free(&self, block: Block) {
@@ -132,7 +135,7 @@ impl Pool {
         }
     }
 
-    unsafe fn alloc(&self, size: u64, alignment: u64) -> Result<Block> {
+    unsafe fn alloc(&self, size: u64, alignment: u64, map: bool) -> Result<(Block, *mut u8)> {
         trace!("Allocating {} bytes from memory pool", size);
         for chunk in self.chunks.read().unwrap().iter() {
             if let Some(block) = chunk.alloc(size, alignment, self.memory_type_index) {
@@ -159,6 +162,7 @@ impl Pool {
             &self.device.upgrade().unwrap(),
             new_size,
             self.memory_type_index,
+            map
         )?;
         let block = chunk
             .alloc(size, alignment, self.memory_type_index)
@@ -185,6 +189,9 @@ impl Drop for Pool {
         let chunks = self.chunks.write().unwrap();
         for chunk in chunks.iter() {
             unsafe {
+                if !chunk.ptr.is_null() {
+                    self.device.upgrade().unwrap().unmap_memory(chunk.memory);
+                }
                 self.device
                     .upgrade()
                     .unwrap()
@@ -199,10 +206,14 @@ struct Chunk {
     memory: vk::DeviceMemory,
     blocks: RwLock<Vec<Block>>,
     size: u64,
+    ptr: *mut u8,
 }
 
+unsafe impl Send for Chunk {}
+unsafe impl Sync for Chunk {}
+
 impl Chunk {
-    unsafe fn new(device: &Device, size: u64, memory_type_index: u32) -> Result<Self> {
+    unsafe fn new(device: &Device, size: u64, memory_type_index: u32, map: bool) -> Result<Self> {
         trace!(
             "Creating chunk of {} bytes and memory type {}",
             size,
@@ -213,14 +224,32 @@ impl Chunk {
             .memory_type_index(memory_type_index);
         let memory = device.allocate_memory(&info, None)?;
         let block = Block::new(memory, memory_type_index, 0, size);
+
+        let ptr = if map {
+            device.map_memory(
+                memory,
+                0,
+                vk::WHOLE_SIZE as u64,
+                vk::MemoryMapFlags::empty(),
+            )?.cast()
+        } else {
+            ptr::null_mut()
+        };
+
         Ok(Self {
             memory,
             blocks: RwLock::new(vec![block]),
             size,
+            ptr,
         })
     }
 
-    unsafe fn alloc(&self, size: u64, alignment: u64, memory_type_index: u32) -> Option<Block> {
+    unsafe fn alloc(
+        &self,
+        size: u64,
+        alignment: u64,
+        memory_type_index: u32,
+    ) -> Option<(Block, *mut u8)> {
         if size > self.size {
             return None;
         }
@@ -282,7 +311,7 @@ impl Chunk {
                 blocks.insert(i, new_block);
             }
 
-            Some(return_block)
+            Some((return_block, self.ptr.add(before_block_offset as usize)))
         } else {
             None
         }
@@ -297,6 +326,7 @@ impl Chunk {
             .find(|b| b.offset == block.offset)
             .unwrap()
             .is_free = true;
+        // TODO merge adjacent free blocks
     }
 }
 

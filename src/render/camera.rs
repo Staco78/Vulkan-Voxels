@@ -1,5 +1,3 @@
-use std::mem::size_of;
-
 use anyhow::Result;
 use glm::{vec3, Mat4, Vec3};
 use nalgebra_glm as glm;
@@ -42,32 +40,31 @@ impl Camera {
         Ok(cam)
     }
 
-    pub unsafe fn send_all(&self, data: &mut RendererData) -> Result<()> {
+    pub unsafe fn send_all(&self, data: &RendererData) -> Result<()> {
         let ubo = UniformBufferObject {
             view: self.view,
             proj: self.proj,
         };
 
         data.uniforms
-            .as_mut()
+            .as_ref()
             .unwrap()
             .buffers
-            .iter_mut()
+            .iter()
             .for_each(|b| {
-                b.fill(&data.device, &ubo, 1).unwrap();
+                *b.lock().unwrap().ptr.cast() = ubo;
             });
 
         Ok(())
     }
 
-    pub unsafe fn send(&self, data: &mut RendererData, image_index: usize) -> Result<()> {
-        let ptr = data.uniforms.as_mut().unwrap().buffers[image_index].map(
-            &data.device,
-            0,
-            size_of::<glm::Mat4>() as u64,
-        )?;
-        *ptr = self.view;
-        data.uniforms.as_mut().unwrap().buffers[image_index].unmap(&data.device)?;
+    pub unsafe fn send(&self, data: &RendererData, image_index: usize) -> Result<()> {
+        let ptr = data.uniforms.as_ref().unwrap().buffers[image_index]
+            .lock()
+            .unwrap()
+            .ptr;
+
+        *ptr.cast() = self.view;
 
         Ok(())
     }

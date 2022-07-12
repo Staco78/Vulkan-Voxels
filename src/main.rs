@@ -36,7 +36,7 @@ fn main() {
 
     let mut app = App::create(&window, &entry).unwrap();
 
-    window.set_cursor_grab(true).unwrap();
+    window.set_cursor_grab(true).unwrap_or_else(|_| warn!("Failed to grab cursor"));
     window.set_cursor_visible(false);
     let mut last_frame_time = Instant::now();
 

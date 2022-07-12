@@ -7,7 +7,7 @@ use vulkanalia::vk;
 
 use crate::{
     config::CHUNK_SIZE,
-    render::{buffer::Buffer, renderer::RendererData, vertex::Vertex},
+    render::{buffer::Buffer, memory::AllocUsage, renderer::RendererData, vertex::Vertex},
 };
 
 use super::world::ChunkPos;
@@ -62,7 +62,11 @@ impl Chunk {
         Ok(c)
     }
 
-    pub fn mesh(&mut self) -> Result<()> {
+    pub unsafe fn mesh(
+        &mut self,
+        renderer_data: &RendererData,
+        staging_buffer: *mut Vertex,
+    ) -> Result<()> {
         trace!("Mesh chunk {:?}", self.pos);
 
         const FRONT: [[i32; 3]; 6] = [
@@ -114,21 +118,25 @@ impl Chunk {
             [1, 0, 1],
         ];
 
-        fn emit_face(
+        unsafe fn emit_face(
             face: &[[i32; 3]; 6],
-            data: &mut Vec<Vertex>,
+            data: *mut Vertex,
             pos: TVec3<i32>,
             light_modifier: u8,
         ) {
+            let mut data = data;
             for vert in face.iter().take(6) {
                 let v = Vertex {
                     pos: pos + vec3(vert[0], vert[1], vert[2]),
                     color: vec3(1., 1., 1.),
                     light_modifier,
                 };
-                data.push(v);
+                *data = v;
+                data = data.add(1);
             }
         }
+
+        let mut i = 0;
 
         for x in 0..CHUNK_SIZE {
             for y in 0..CHUNK_SIZE {
@@ -143,50 +151,43 @@ impl Chunk {
                         if x >= CHUNK_SIZE - 1
                             || self.blocks[index + CHUNK_SIZE * CHUNK_SIZE].id == 0
                         {
-                            emit_face(&BACK, &mut self.vertices, pos, 8);
+                            emit_face(&BACK, staging_buffer.offset(i), pos, 8);
+                            i += 6;
                         }
                         if x == 0 || self.blocks[index - CHUNK_SIZE * CHUNK_SIZE].id == 0 {
-                            emit_face(&FRONT, &mut self.vertices, pos, 8);
+                            emit_face(&FRONT, staging_buffer.offset(i), pos, 8);
+                            i += 6;
                         }
                         if z >= CHUNK_SIZE - 1 || self.blocks[index + 1].id == 0 {
-                            emit_face(&RIGHT, &mut self.vertices, pos, 6);
+                            emit_face(&RIGHT, staging_buffer.offset(i), pos, 6);
+                            i += 6;
                         }
                         if z == 0 || self.blocks[index - 1].id == 0 {
-                            emit_face(&LEFT, &mut self.vertices, pos, 6);
+                            emit_face(&LEFT, staging_buffer.offset(i), pos, 6);
+                            i += 6;
                         }
                         if y >= CHUNK_SIZE - 1 || self.blocks[index + CHUNK_SIZE].id == 0 {
-                            emit_face(&UP, &mut self.vertices, pos, 10);
+                            emit_face(&UP, staging_buffer.offset(i), pos, 10);
+                            i += 6;
                         }
                         if y == 0 || self.blocks[index - CHUNK_SIZE].id == 0 {
-                            emit_face(&DOWN, &mut self.vertices, pos, 5);
+                            emit_face(&DOWN, staging_buffer.offset(i), pos, 5);
+                            i += 6;
                         }
                     }
                 }
             }
         }
 
-        Ok(())
-    }
-
-    pub unsafe fn finish_mesh(&mut self, renderer_data: &mut RendererData) -> Result<()> {
-        trace!("Finish mesh chunk {:?}", self.pos);
-
         self.vertex_buffer = Some(Buffer::create(
             renderer_data,
-            self.vertices.len() * size_of::<Vertex>(),
-            vk::BufferUsageFlags::VERTEX_BUFFER,
+            i as usize * size_of::<Vertex>(),
+            vk::BufferUsageFlags::VERTEX_BUFFER | vk::BufferUsageFlags::TRANSFER_DST,
+            AllocUsage::DeviceLocal,
         )?);
 
-        self.vertex_buffer.as_mut().unwrap().fill(
-            &renderer_data.device,
-            self.vertices.as_ptr(),
-            self.vertices.len(),
-        )?;
+        self.vertices_len = i as usize;
 
-        self.vertices_len = self.vertices.len();
-
-        self.vertices.clear();
-        self.vertices.shrink_to_fit();
         Ok(())
     }
 }

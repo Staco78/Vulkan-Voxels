@@ -14,9 +14,9 @@ pub struct App {
 impl App {
     pub fn create(window: &Window, entry: &Entry) -> Result<Self> {
         let renderer = unsafe { Renderer::new(window, entry) };
-        let world = World::new();
+        let world = unsafe { World::new()? };
         let mut thread_pool = MeshingThreadPool::new();
-        thread_pool.start_threads(4);
+        unsafe { thread_pool.start_threads(renderer.data.clone()) };
         Ok(Self {
             renderer,
             world,
@@ -27,9 +27,9 @@ impl App {
 
     pub fn tick(&mut self) -> Result<()> {
         self.world.tick(
-            &mut self.renderer.data,
+            &self.renderer.data.read().unwrap(),
             &self.meshing_threads,
-            self.renderer.camera.pos,
+            self.renderer.camera.borrow().pos,
         )?;
         Ok(())
     }
@@ -51,7 +51,13 @@ impl Drop for App {
     fn drop(&mut self) {
         self.meshing_threads.exit_all();
         unsafe {
-            self.renderer.data.device.device_wait_idle().unwrap();
+            self.renderer
+                .data
+                .read()
+                .unwrap()
+                .device
+                .device_wait_idle()
+                .unwrap();
         }
     }
 }

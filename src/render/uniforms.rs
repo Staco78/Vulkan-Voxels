@@ -1,10 +1,10 @@
 use std::{
     marker::PhantomData,
     mem::size_of,
-    sync::{self, Arc},
+    sync::{self, Arc, Mutex},
 };
 
-use super::{buffer::Buffer, renderer::RendererData};
+use super::{buffer::Buffer, memory::AllocUsage, renderer::RendererData};
 use anyhow::Result;
 use vulkanalia::{
     vk::{self, DeviceV1_0, HasBuilder},
@@ -15,7 +15,7 @@ pub struct Uniforms<T> {
     device: sync::Weak<Device>,
 
     pub descriptor_set_layout: vk::DescriptorSetLayout,
-    pub buffers: Vec<Buffer>,
+    pub buffers: Vec<Mutex<Buffer>>,
     pub descriptor_pool: vk::DescriptorPool,
     pub descriptor_sets: Vec<vk::DescriptorSet>,
     _marker: PhantomData<T>,
@@ -38,11 +38,12 @@ impl<T> Uniforms<T> {
 
         let mut buffers = Vec::with_capacity(data.swapchain.as_ref().unwrap().images.len());
         for _ in 0..data.swapchain.as_ref().unwrap().images.len() {
-            buffers.push(Buffer::create(
+            buffers.push(Mutex::new(Buffer::create(
                 data,
                 size_of::<T>(),
                 vk::BufferUsageFlags::UNIFORM_BUFFER,
-            )?);
+                AllocUsage::Staging,
+            )?));
         }
 
         let descriptor_pool = {
@@ -69,7 +70,7 @@ impl<T> Uniforms<T> {
 
             for i in 0..data.swapchain.as_ref().unwrap().images.len() {
                 let info = vk::DescriptorBufferInfo::builder()
-                    .buffer(buffers[i].buffer)
+                    .buffer(buffers[i].lock().unwrap().buffer)
                     .offset(0)
                     .range(size_of::<T>() as u64);
 

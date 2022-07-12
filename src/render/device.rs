@@ -5,6 +5,7 @@ use vulkanalia::vk::{DeviceV1_0, HasBuilder};
 use vulkanalia::{vk, Device, Instance};
 
 use crate::config::{DEVICE_EXTENSIONS, VALIDATION_ENABLED, VALIDATION_LAYER};
+use crate::threads::MESHING_THREADS_COUNT;
 
 use super::queue::QueueFamilyIndices;
 
@@ -19,8 +20,11 @@ pub unsafe fn create(
     unique_indices.insert(indices.graphics);
     unique_indices.insert(indices.present);
 
+    assert!(indices.transfer != indices.graphics);
+    assert!(indices.transfer != indices.present);
+
     let queue_priorities = &[1.0];
-    let queue_infos = unique_indices
+    let mut queue_infos = unique_indices
         .iter()
         .map(|i| {
             vk::DeviceQueueCreateInfo::builder()
@@ -28,6 +32,12 @@ pub unsafe fn create(
                 .queue_priorities(queue_priorities)
         })
         .collect::<Vec<_>>();
+
+    queue_infos.push(
+        vk::DeviceQueueCreateInfo::builder()
+            .queue_family_index(indices.transfer)
+            .queue_priorities(&[1.0; MESHING_THREADS_COUNT]),
+    );
 
     let layers = if VALIDATION_ENABLED {
         vec![VALIDATION_LAYER.as_ptr()]

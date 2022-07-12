@@ -6,9 +6,12 @@ use vulkanalia::{
     Instance,
 };
 
+use crate::threads::MESHING_THREADS_COUNT;
+
 pub struct QueueFamilyIndices {
     pub graphics: u32,
     pub present: u32,
+    pub transfer: u32,
 }
 
 impl QueueFamilyIndices {
@@ -22,7 +25,26 @@ impl QueueFamilyIndices {
         let graphics = properties
             .iter()
             .position(|p| p.queue_flags.contains(vk::QueueFlags::GRAPHICS))
-            .map(|i| i as u32);
+            .map(|i| i as u32)
+            .ok_or_else(|| anyhow!("No graphics queue family found."))?;
+
+        let transfer = properties
+            .iter()
+            .position(|p| {
+                p.queue_flags.contains(vk::QueueFlags::TRANSFER)
+                    && p != &properties[graphics as usize]
+                    && p.queue_count >= MESHING_THREADS_COUNT as u32
+            })
+            .map(|i| i as u32)
+            .ok_or_else(|| anyhow!("No valid transfert queue family found: required queue count: {MESHING_THREADS_COUNT} found: {}.", properties.iter().fold(0, |acc, p| {
+                if p.queue_flags.contains(vk::QueueFlags::TRANSFER)
+                && p != &properties[graphics as usize] {
+                    if acc < p.queue_count {
+                       return p.queue_count
+                    }
+                }
+                acc
+            })))?;
 
         let mut present = None;
         for (index, _properties) in properties.iter().enumerate() {
@@ -30,16 +52,21 @@ impl QueueFamilyIndices {
                 physical_device,
                 index as u32,
                 surface,
-            )? {
+            )? && index as u32 != transfer
+            {
                 present = Some(index as u32);
                 break;
             }
         }
 
-        if let (Some(graphics), Some(present)) = (graphics, present) {
-            Ok(Self { graphics, present })
+        if let Some(present) = present {
+            Ok(Self {
+                graphics,
+                present,
+                transfer,
+            })
         } else {
-            Err(anyhow!("Missing required queue families."))
+            Err(anyhow!("No present queue family found."))
         }
     }
 }

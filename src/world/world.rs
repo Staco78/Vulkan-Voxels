@@ -28,16 +28,16 @@ pub struct World {
 }
 
 impl World {
-    pub fn new() -> Self {
-        Self {
+    pub unsafe fn new() -> Result<Self> {
+        Ok(Self {
             chunks: HashMap::new(),
             chunks_to_render: Vec::new(),
-        }
+        })
     }
 
     fn update_visible_chunks(
         &mut self,
-        data: &mut RendererData,
+        data: &RendererData,
         meshing_pool: &MeshingThreadPool,
         player_pos: Vec3,
     ) -> Result<()> {
@@ -61,7 +61,8 @@ impl World {
         }
 
         unsafe {
-            data.device.device_wait_idle()?;
+            data.device.queue_wait_idle(data.graphics_queue)?;
+            data.device.queue_wait_idle(data.present_queue)?;
         }
 
         for pos in chunks_to_destroy {
@@ -91,13 +92,9 @@ impl World {
             }
         }
 
-        for recv_chunk in meshing_pool.try_iter() {
-            if let Some(chunk) = recv_chunk.upgrade() {
-                {
-                    let mut chunk = chunk.lock().unwrap();
-                    unsafe { chunk.finish_mesh(data)? };
-                }
-                self.chunks_to_render.push(recv_chunk);
+        for chunk in meshing_pool.try_iter() {
+            if chunk.upgrade().is_some() {
+                self.chunks_to_render.push(chunk);
             }
         }
 
@@ -106,7 +103,7 @@ impl World {
 
     pub fn tick(
         &mut self,
-        data: &mut RendererData,
+        data: &RendererData,
         meshing_pool: &MeshingThreadPool,
         player_pos: Vec3,
     ) -> Result<()> {

@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use vulkanalia::{
     vk::{self, DeviceV1_0, HasBuilder},
     Device,
@@ -9,11 +9,7 @@ use super::{
     renderer::RendererData,
 };
 
-use std::{
-    mem::size_of,
-    ptr::copy_nonoverlapping,
-    sync::{self, Arc},
-};
+use std::sync::{self, Arc};
 
 #[derive(Debug)]
 pub struct Buffer {
@@ -21,26 +17,31 @@ pub struct Buffer {
     allocator: sync::Weak<Allocator>,
     pub buffer: vk::Buffer,
     pub alloc: Block,
-    current_map_ranges: Option<(u64, u64)>,
+    pub ptr: *mut u8, // null if not staging buffer
 }
+
+unsafe impl Send for Buffer {}
+unsafe impl Sync for Buffer {}
 
 impl Buffer {
     pub unsafe fn create(
         data: &RendererData,
         size: usize,
-        usage: vk::BufferUsageFlags,
+        buffer_usage: vk::BufferUsageFlags,
+        memory_usage: AllocUsage,
     ) -> Result<Self> {
         let info = vk::BufferCreateInfo::builder()
             .size(size as u64)
-            .usage(usage);
+            .usage(buffer_usage)
+            .sharing_mode(vk::SharingMode::CONCURRENT)
+            .queue_family_indices(&[0, 1, 2]);
         let buffer = data.device.create_buffer(&info, None)?;
 
         let memory_requirements = data.device.get_buffer_memory_requirements(buffer);
 
-        let alloc = data.allocator.alloc(AllocRequirements::new(
-            memory_requirements,
-            AllocUsage::Staging,
-        ))?;
+        let (alloc, ptr) = data
+            .allocator
+            .alloc(AllocRequirements::new(memory_requirements, memory_usage))?;
 
         data.device
             .bind_buffer_memory(buffer, alloc.memory, alloc.offset)?;
@@ -50,51 +51,8 @@ impl Buffer {
             allocator: Arc::downgrade(&data.allocator),
             buffer,
             alloc,
-            current_map_ranges: None,
+            ptr,
         })
-    }
-
-    pub unsafe fn fill<T>(&mut self, device: &Device, data: *const T, count: usize) -> Result<()> {
-        let memory = self.map::<T>(device, 0, (size_of::<T>() * count) as u64)?;
-
-        copy_nonoverlapping(data, memory.cast(), count);
-
-        self.unmap(device)?;
-
-        Ok(())
-    }
-
-    pub unsafe fn map<T>(&mut self, device: &Device, offset: u64, size: u64) -> Result<*mut T> {
-        assert!(self.current_map_ranges.is_none());
-        assert!(size <= self.alloc.size);
-
-        let memory = device.map_memory(
-            self.alloc.memory,
-            self.alloc.offset + offset,
-            size,
-            vk::MemoryMapFlags::empty(),
-        )?;
-
-        self.current_map_ranges = Some((offset, size));
-
-        Ok(memory.cast())
-    }
-
-    pub unsafe fn unmap(&mut self, device: &Device) -> Result<()> {
-        let map = self
-            .current_map_ranges
-            .ok_or_else(|| anyhow!("Buffer not mapped"))?;
-        let memory_ranges = &[vk::MappedMemoryRange::builder()
-            .memory(self.alloc.memory)
-            .offset(self.alloc.offset + map.0)
-            .size(map.1)];
-        device.flush_mapped_memory_ranges(memory_ranges)?;
-
-        device.unmap_memory(self.alloc.memory);
-
-        self.current_map_ranges = None;
-
-        Ok(())
     }
 }
 
