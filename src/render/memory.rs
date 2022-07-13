@@ -2,7 +2,7 @@ use std::{
     ptr,
     sync::{
         atomic::{AtomicU64, Ordering},
-        Arc, RwLock, Weak,
+        Arc, Mutex, RwLock, Weak,
     },
 };
 
@@ -19,7 +19,7 @@ pub enum AllocUsage {
     DeviceLocal,
 }
 
-const MIN_ALLOC_SIZE: usize = 1024 * 1024;
+const MIN_ALLOC_SIZE: usize = 1024 * 1024 * 16;
 
 #[derive(Copy, Clone, Debug)]
 pub struct AllocRequirements {
@@ -42,7 +42,6 @@ impl AllocRequirements {
 
 #[derive(Debug)]
 pub struct Allocator {
-    // device: Weak<Device>,
     memory_properties: vk::PhysicalDeviceMemoryProperties,
     pools: Vec<Pool>,
 }
@@ -59,7 +58,6 @@ impl Allocator {
             pools.push(Pool::new(device, i as u32));
         }
         Self {
-            // device: Arc::downgrade(device),
             memory_properties,
             pools,
         }
@@ -70,7 +68,9 @@ impl Allocator {
         usage: AllocUsage,
     ) -> vk::MemoryPropertyFlags {
         match usage {
-            AllocUsage::Staging => vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
+            AllocUsage::Staging => {
+                vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT
+            }
             AllocUsage::DeviceLocal => vk::MemoryPropertyFlags::DEVICE_LOCAL,
         }
     }
@@ -103,7 +103,11 @@ impl Allocator {
         )?;
 
         let pool = &self.pools[memory_type_index as usize];
-        pool.alloc(requirements.size, requirements.alignment, requirements.usage == AllocUsage::Staging)
+        pool.alloc(
+            requirements.size,
+            requirements.alignment,
+            requirements.usage == AllocUsage::Staging,
+        )
     }
 
     pub unsafe fn free(&self, block: Block) {
@@ -114,6 +118,117 @@ impl Allocator {
     pub unsafe fn free_all(&mut self) {
         self.pools.clear();
     }
+
+    #[cfg(debug_assertions)]
+    #[allow(unused)]
+    pub fn snapchot(&self) {
+        #[inline(always)]
+        fn size(size: u64) -> String {
+            if size < 1024 {
+                format!("{}B", size)
+            } else {
+                let s = size as f32;
+                if size < 1024 * 1024 {
+                    format!("{}KB", s / 1024.)
+                } else if size < 1024 * 1024 * 1024 {
+                    format!("{}MB", s / 1024. / 1024.)
+                } else {
+                    format!("{}GB", s / 1024. / 1024. / 1024.)
+                }
+            }
+        }
+        use std::io::{stdout, Write};
+        let mut handle = stdout().lock();
+        for pool in &self.pools {
+            let pool_chunks = pool.chunks.write().unwrap();
+            #[derive(Clone)]
+            struct ChunkInfo {
+                size: u64,
+                free: u64,
+                used: u64,
+                blocks_info: Vec<Block>,
+            }
+            struct PoolInfo {
+                alloc_size: u64,
+                size: u64,
+                free: u64,
+                used: u64,
+                chunks_infos: Vec<ChunkInfo>,
+            }
+
+            let mut pool_info = PoolInfo {
+                alloc_size: pool.size.load(Ordering::Relaxed),
+                size: 0,
+                free: 0,
+                used: 0,
+                chunks_infos: Vec::with_capacity(pool_chunks.len()),
+            };
+            for chunk in pool_chunks.iter() {
+                let mut chunk_info = ChunkInfo {
+                    size: chunk.size,
+                    free: 0,
+                    used: 0,
+                    blocks_info: Vec::new(),
+                };
+                for block in chunk.blocks.write().unwrap().iter() {
+                    if block.is_free {
+                        chunk_info.free += block.size;
+                    } else {
+                        chunk_info.used += block.size;
+                    }
+                    chunk_info.blocks_info.push(*block);
+                }
+                pool_info.free += chunk_info.free;
+                pool_info.used += chunk_info.used;
+                pool_info.size += chunk_info.size;
+                pool_info.chunks_infos.push(chunk_info);
+            }
+
+            writeln!(handle, "Pool: ").unwrap();
+            writeln!(handle, "  Alloc size: {}", size(pool_info.alloc_size)).unwrap();
+            writeln!(handle, "  size: {:?}", size(pool_info.size)).unwrap();
+            writeln!(
+                handle,
+                "  free: {:?} ({}%)",
+                size(pool_info.free),
+                pool_info.free as f64 / pool_info.size as f64 * 100.
+            )
+            .unwrap();
+            writeln!(
+                handle,
+                "  used: {:?} ({}%)",
+                size(pool_info.used),
+                pool_info.used as f64 / pool_info.size as f64 * 100.
+            )
+            .unwrap();
+            writeln!(handle, "  chunks:").unwrap();
+
+            for chunk in pool_info.chunks_infos {
+                writeln!(handle, "    size: {:?}", size(chunk.size)).unwrap();
+                writeln!(
+                    handle,
+                    "    free: {:?} ({}%)",
+                    size(chunk.free),
+                    chunk.free as f64 / chunk.size as f64 * 100.
+                )
+                .unwrap();
+                writeln!(
+                    handle,
+                    "    used: {:?} ({}%)",
+                    size(chunk.used),
+                    chunk.used as f64 / chunk.size as f64 * 100.
+                )
+                .unwrap();
+                writeln!(handle, "    blocks:").unwrap();
+                for block in chunk.blocks_info {
+                    write!(handle, "      size: {:?}", size(block.size)).unwrap();
+                    writeln!(handle, "  free: {:?}", block.is_free).unwrap();
+                }
+            }
+
+            writeln!(handle).unwrap();
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -122,6 +237,7 @@ struct Pool {
     memory_type_index: u32,
     chunks: RwLock<Vec<Chunk>>,
     size: AtomicU64,
+    growth_lock: Mutex<()>,
 }
 
 impl Pool {
@@ -132,6 +248,7 @@ impl Pool {
             memory_type_index,
             chunks: RwLock::new(Vec::new()),
             size: AtomicU64::new(MIN_ALLOC_SIZE as u64),
+            growth_lock: Mutex::new(()),
         }
     }
 
@@ -143,9 +260,22 @@ impl Pool {
             }
         }
 
+        let result = self.growth_lock.try_lock();
+        let _lock = match result {
+            Ok(lock) => lock,
+            Err(_) => {
+                // wait other thread to finish growth and retry alloc
+                let l = self.growth_lock.lock().unwrap();
+                drop(l);
+                return self.alloc(size, alignment, map);
+            }
+        };
+
         // no chunk has enough space, create a new one
 
-        let mut new_size = size.max(self.size.load(Ordering::Relaxed));
+        let old_size = self.size.load(Ordering::Relaxed);
+        let mut new_size = size.max(old_size);
+
         // round up size to next power of 2
         new_size -= 1;
         new_size |= new_size >> 1;
@@ -156,13 +286,17 @@ impl Pool {
         new_size |= new_size >> 32;
         new_size += 1;
 
+        if old_size == new_size {
+            new_size *= 2;
+        }
+
         self.size.store(new_size, Ordering::Relaxed);
 
         let chunk = Chunk::new(
             &self.device.upgrade().unwrap(),
             new_size,
             self.memory_type_index,
-            map
+            map,
         )?;
         let block = chunk
             .alloc(size, alignment, self.memory_type_index)
@@ -226,12 +360,14 @@ impl Chunk {
         let block = Block::new(memory, memory_type_index, 0, size);
 
         let ptr = if map {
-            device.map_memory(
-                memory,
-                0,
-                vk::WHOLE_SIZE as u64,
-                vk::MemoryMapFlags::empty(),
-            )?.cast()
+            device
+                .map_memory(
+                    memory,
+                    0,
+                    vk::WHOLE_SIZE as u64,
+                    vk::MemoryMapFlags::empty(),
+                )?
+                .cast()
         } else {
             ptr::null_mut()
         };
@@ -254,9 +390,9 @@ impl Chunk {
             return None;
         }
 
+        let mut blocks = self.blocks.write().unwrap(); // possible optimization: rwlock on each block and read lock only here
         let mut block_out_index = None;
         {
-            let blocks = self.blocks.read().unwrap();
             for (i, block) in blocks.iter().enumerate() {
                 if block.is_free {
                     let mut block_size = block.size;
@@ -272,9 +408,7 @@ impl Chunk {
             }
         }
 
-        // FIXME this is not thread safe: another thread could acquire the lock beetween the release of the read lock and the acquire of the write lock and use our block
         if let Some(i) = block_out_index {
-            let mut blocks = self.blocks.write().unwrap();
             trace!("Alloc {} bytes from chunk in block {:?}", size, blocks[i]);
 
             let before_size = if blocks[i].offset % alignment != 0 {
@@ -321,12 +455,20 @@ impl Chunk {
         trace!("Freeing block {:?}", block);
         let mut blocks = self.blocks.write().unwrap();
         // FIXME binary search
-        blocks
+        let i = blocks
             .iter_mut()
-            .find(|b| b.offset == block.offset)
-            .unwrap()
-            .is_free = true;
-        // TODO merge adjacent free blocks
+            .position(|b| b.offset == block.offset)
+            .unwrap();
+        blocks[i].is_free = true;
+        if i + 1 < blocks.len() && blocks[i + 1].is_free {
+            blocks[i].size += blocks[i + 1].size;
+            blocks.remove(i + 1);
+        }
+        if i > 0 && blocks[i - 1].is_free {
+            blocks[i].offset = blocks[i - 1].offset;
+            blocks[i].size += blocks[i - 1].size;
+            blocks.remove(i - 1);
+        }
     }
 }
 

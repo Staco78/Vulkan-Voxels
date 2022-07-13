@@ -21,8 +21,16 @@ use winit::{
     window::{Fullscreen, WindowBuilder},
 };
 
+#[cfg(feature = "profile-with-tracy")]
+use profiling::tracy_client;
+
 fn main() {
     pretty_env_logger::init();
+
+    #[cfg(feature = "profile-with-tracy")]
+    let _ = tracy_client::Client::start();
+
+    profiling::register_thread!("Main thread");
 
     let event_loop = EventLoop::new();
     let window = WindowBuilder::new()
@@ -36,7 +44,9 @@ fn main() {
 
     let mut app = App::create(&window, &entry).unwrap();
 
-    window.set_cursor_grab(true).unwrap_or_else(|_| warn!("Failed to grab cursor"));
+    window
+        .set_cursor_grab(true)
+        .unwrap_or_else(|_| warn!("Failed to grab cursor"));
     window.set_cursor_visible(false);
     let mut last_frame_time = Instant::now();
 
@@ -58,6 +68,9 @@ fn main() {
                             window.set_fullscreen(Some(Fullscreen::Borderless(None)));
                         }
                     }
+                    // if key == VirtualKeyCode::F1 && input.state == winit::event::ElementState::Pressed {
+                    //     app.renderer.data.read().unwrap().allocator.snapchot();
+                    // }
                     if input.state == winit::event::ElementState::Pressed {
                         app.inputs.key_pressed(key);
                     } else {

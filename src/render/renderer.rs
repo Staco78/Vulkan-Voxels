@@ -25,9 +25,10 @@ use super::{
     memory::Allocator,
     physical_device,
     pipeline::Pipeline,
+    queue::QueueFamilyIndices,
     swapchain::Swapchain,
     sync,
-    uniforms::Uniforms, queue::QueueFamilyIndices,
+    uniforms::Uniforms,
 };
 
 #[repr(C)]
@@ -71,7 +72,15 @@ impl Renderer {
         data.depth_buffer = Some(DepthBuffer::create(&data).unwrap());
         data.pipeline = Some(Pipeline::create(&data).unwrap());
         data.framebuffers = Some(Framebuffers::create(&data).unwrap());
-        data.command_pool = Some(CommandPool::create(&data, QueueFamilyIndices::get(&data.instance, surface, physical_device).unwrap().graphics).unwrap());
+        data.command_pool = Some(
+            CommandPool::create(
+                &data,
+                QueueFamilyIndices::get(&data.instance, surface, physical_device)
+                    .unwrap()
+                    .graphics,
+            )
+            .unwrap(),
+        );
         data.command_buffers = data
             .command_pool
             .as_mut()
@@ -134,6 +143,7 @@ impl Renderer {
         Ok(())
     }
 
+    #[profiling::function]
     pub unsafe fn record_commands(
         &self,
         chunks: &mut Vec<Weak<Mutex<Chunk>>>,
@@ -233,15 +243,13 @@ impl Renderer {
         Ok(())
     }
 
+    #[profiling::function]
     pub unsafe fn render(
         &mut self,
         window: &Window,
         chunks: &mut Vec<Weak<Mutex<Chunk>>>,
         _dt: f32,
     ) -> Result<()> {
-        let t = std::time::Instant::now();
-        debug!("Rendering");
-
         let data = self.data.read().unwrap();
         data.device.wait_for_fences(
             &[data.in_flight_fences[self.frame]],
@@ -266,6 +274,7 @@ impl Renderer {
         };
 
         {
+            profiling::scope!("wait imge in flight");
             let mut images_in_flight = data.images_in_flight.lock().unwrap();
 
             if !images_in_flight[image_index as usize].is_null() {
@@ -328,7 +337,7 @@ impl Renderer {
 
         self.frame = (self.frame + 1) % MAX_FRAMES_IN_FLIGHT;
 
-        debug!("Rendering took {:?}", t.elapsed());
+        profiling::finish_frame!();
 
         Ok(())
     }

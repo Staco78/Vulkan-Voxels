@@ -27,7 +27,6 @@ pub struct Chunk {
 
 impl Debug for Chunk {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // write!(f, "Chunk {{ pos: {:?}, vertex_buffer: {:?}, vertices: {:?}, vertices_len: {:?} }}", self.pos, self.vertex_buffer, self.vertices, self.vertices_len)
         f.debug_struct("Chunk")
             .field("pos", &self.pos)
             .field("vertex_buffer", &self.vertex_buffer)
@@ -38,6 +37,7 @@ impl Debug for Chunk {
 }
 
 impl Chunk {
+    #[profiling::function]
     pub fn new(pos: ChunkPos) -> Result<Self> {
         let mut c = Self {
             pos,
@@ -48,10 +48,10 @@ impl Chunk {
         };
 
         for x in 0..CHUNK_SIZE {
-            for y in 0..CHUNK_SIZE {
-                let height = (x as i32 - y as i32).unsigned_abs() as usize;
-                assert!(height < CHUNK_SIZE);
-                for z in 0..height {
+            for z in 0..CHUNK_SIZE {
+                let height = (x as i32 - z as i32).unsigned_abs() as usize;
+                debug_assert!(height < CHUNK_SIZE);
+                for y in 0..height {
                     c.blocks[x * CHUNK_SIZE * CHUNK_SIZE + y * CHUNK_SIZE + z].id = 1;
                 }
             }
@@ -62,11 +62,7 @@ impl Chunk {
         Ok(c)
     }
 
-    pub unsafe fn mesh(
-        &mut self,
-        renderer_data: &RendererData,
-        staging_buffer: *mut Vertex,
-    ) -> Result<()> {
+    pub unsafe fn mesh(&mut self, renderer_data: &RendererData, buffer: &Buffer) -> Result<()> {
         trace!("Mesh chunk {:?}", self.pos);
 
         const FRONT: [[i32; 3]; 6] = [
@@ -118,24 +114,27 @@ impl Chunk {
             [1, 0, 1],
         ];
 
+        #[inline(always)]
         unsafe fn emit_face(
             face: &[[i32; 3]; 6],
-            data: *mut Vertex,
             pos: TVec3<i32>,
             light_modifier: u8,
-        ) {
-            let mut data = data;
+            data: &mut [Vertex],
+            mut i: usize,
+        ) -> usize {
             for vert in face.iter().take(6) {
                 let v = Vertex {
                     pos: pos + vec3(vert[0], vert[1], vert[2]),
                     color: vec3(1., 1., 1.),
                     light_modifier,
                 };
-                *data = v;
-                data = data.add(1);
+                data[i] = v;
+                i += 1;
             }
+            i
         }
 
+        let data = std::slice::from_raw_parts_mut(buffer.ptr.cast(), buffer.alloc.size as usize);
         let mut i = 0;
 
         for x in 0..CHUNK_SIZE {
@@ -151,28 +150,22 @@ impl Chunk {
                         if x >= CHUNK_SIZE - 1
                             || self.blocks[index + CHUNK_SIZE * CHUNK_SIZE].id == 0
                         {
-                            emit_face(&BACK, staging_buffer.offset(i), pos, 8);
-                            i += 6;
+                            i = emit_face(&BACK, pos, 8, data, i);
                         }
                         if x == 0 || self.blocks[index - CHUNK_SIZE * CHUNK_SIZE].id == 0 {
-                            emit_face(&FRONT, staging_buffer.offset(i), pos, 8);
-                            i += 6;
+                            i = emit_face(&FRONT, pos, 8, data, i);
                         }
                         if z >= CHUNK_SIZE - 1 || self.blocks[index + 1].id == 0 {
-                            emit_face(&RIGHT, staging_buffer.offset(i), pos, 6);
-                            i += 6;
+                            i = emit_face(&RIGHT, pos, 6, data, i);
                         }
                         if z == 0 || self.blocks[index - 1].id == 0 {
-                            emit_face(&LEFT, staging_buffer.offset(i), pos, 6);
-                            i += 6;
+                            i = emit_face(&LEFT, pos, 6, data, i);
                         }
                         if y >= CHUNK_SIZE - 1 || self.blocks[index + CHUNK_SIZE].id == 0 {
-                            emit_face(&UP, staging_buffer.offset(i), pos, 10);
-                            i += 6;
+                            i = emit_face(&UP, pos, 10, data, i);
                         }
                         if y == 0 || self.blocks[index - CHUNK_SIZE].id == 0 {
-                            emit_face(&DOWN, staging_buffer.offset(i), pos, 5);
-                            i += 6;
+                            i = emit_face(&DOWN, pos, 5, data, i);
                         }
                     }
                 }

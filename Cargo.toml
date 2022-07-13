@@ -9,7 +9,23 @@ edition = "2021"
 vulkanalia = { version = "=0.12.0", features = ["libloading", "window"] }
 winit = "0.24"
 nalgebra-glm = "0.10"
-log = "0.4"
+log = { version ="0.4", features = ["release_max_level_warn"] }
 pretty_env_logger = "0.4"
-anyhow = { version= "1", features = ["backtrace"] }
+anyhow = { version= "1" }
 crossbeam-channel = "0.5"
+
+profiling = "1.0"
+
+[features]
+default = ["anyhow/backtrace"]
+profile-with-puffin = ["profiling/profile-with-puffin"]
+profile-with-optick = ["profiling/profile-with-optick"]
+profile-with-superluminal = ["profiling/profile-with-superluminal"]
+profile-with-tracing = ["profiling/profile-with-tracing"]
+profile-with-tracy = ["profiling/profile-with-tracy"]
+
+
+[profile.release]
+lto = true
+panic = "abort"
+strip = true 

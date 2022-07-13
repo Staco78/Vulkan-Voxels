@@ -97,6 +97,7 @@ impl MeshingThreadPool {
         exit: Arc<AtomicBool>,
         renderer_data: Arc<RwLock<RendererData>>,
     ) {
+        profiling::register_thread!();
         trace!("{} started", thread::current().name().unwrap());
         let (staging_buffer, queue_index, queue) = {
             let data = renderer_data.read().unwrap();
@@ -130,30 +131,41 @@ impl MeshingThreadPool {
             if let Some(chunk) = recv_chunk.upgrade() {
                 {
                     let mut chunk = chunk.lock().unwrap();
-                    chunk
-                        .mesh(&renderer_data.read().unwrap(), staging_buffer.ptr.cast())
-                        .unwrap();
+                    {
+                        profiling::scope!("meshing");
+                        chunk
+                            .mesh(&renderer_data.read().unwrap(), &staging_buffer)
+                            .unwrap();
+                    }
 
-                    let device = &renderer_data.read().unwrap().device;
-                    command_buffer.begin(device).unwrap();
-                    let regions = vk::BufferCopy::builder()
-                        .size((chunk.vertices_len * std::mem::size_of::<Vertex>()) as u64)
-                        .build();
-                    device.cmd_copy_buffer(
-                        command_buffer.buffer,
-                        staging_buffer.buffer,
-                        chunk.vertex_buffer.as_ref().unwrap().buffer,
-                        &[regions],
-                    );
-                    command_buffer.end(device).unwrap();
+                    {
+                        profiling::scope!("uploading");
+                        let device = &renderer_data.read().unwrap().device;
+                        {
+                            profiling::scope!("recording");
+                            command_buffer.begin(device).unwrap();
+                            let regions = vk::BufferCopy::builder()
+                                .size((chunk.vertices_len * std::mem::size_of::<Vertex>()) as u64);
+                            device.cmd_copy_buffer(
+                                command_buffer.buffer,
+                                staging_buffer.buffer,
+                                chunk.vertex_buffer.as_ref().unwrap().buffer,
+                                &[regions],
+                            );
+                            command_buffer.end(device).unwrap();
+                        }
 
-                    let submit_info = vk::SubmitInfo::builder()
-                        .command_buffers(&[command_buffer.buffer])
-                        .build();
-                    device
-                        .queue_submit(queue, &[submit_info], vk::Fence::null())
-                        .unwrap();
-                    device.queue_wait_idle(queue).unwrap();
+                        {
+                            profiling::scope!("submitting");
+                            let buffers = &[command_buffer.buffer];
+                            let submit_info = vk::SubmitInfo::builder().command_buffers(buffers);
+                            device
+                                .queue_submit(queue, &[submit_info], vk::Fence::null())
+                                .unwrap();
+                        }
+                        profiling::scope!("waiting");
+                        device.queue_wait_idle(queue).unwrap();
+                    }
                 }
                 sender.send(recv_chunk).unwrap();
             }
