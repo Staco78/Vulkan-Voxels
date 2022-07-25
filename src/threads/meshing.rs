@@ -1,5 +1,6 @@
 use std::{
     mem::size_of,
+    num::NonZeroUsize,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc, Mutex, RwLock, Weak,
@@ -8,21 +9,36 @@ use std::{
 };
 
 use crossbeam_channel::{Receiver, Sender, TryIter};
-use log::trace;
+use log::{info, trace, warn};
 use vulkanalia::vk::{self, DeviceV1_0, Handle, HasBuilder};
 
 use crate::{
     config::CHUNK_SIZE,
     render::{
-        buffer::Buffer, commands::CommandPool, memory::AllocUsage, queue::QueueFamilyIndices,
+        buffer::Buffer, commands::CommandPool, memory::AllocUsage, physical_device::PhysicalDevice,
         renderer::RendererData, vertex::Vertex,
     },
     world::Chunk,
 };
 
-pub const MESHING_THREADS_COUNT: usize = 4;
 pub const STAGING_BUFFER_SIZE: usize =
     ((CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE) as usize * size_of::<Vertex>() * 36) / 2;
+
+#[inline]
+fn get_threads_count(physical_device: &PhysicalDevice) -> usize {
+    let parallelism: usize = thread::available_parallelism()
+        .unwrap_or_else(|_| {
+            warn!("Unable to know the CPU cores count: default to 4");
+            unsafe { NonZeroUsize::new_unchecked(4) }
+        })
+        .into();
+    info!("Detected {parallelism} cores");
+    let max_meshing_threads = match parallelism {
+        1..=4 => parallelism,
+        _ => parallelism - 1,
+    };
+    max_meshing_threads.min(physical_device.transfer_queues.len())
+}
 
 pub struct MeshingThreadPool {
     threads: Vec<thread::JoinHandle<()>>,
@@ -54,9 +70,10 @@ impl MeshingThreadPool {
     }
 
     pub unsafe fn start_threads(&mut self, data: Arc<RwLock<RendererData>>) {
-        trace!("Starting {} meshing threads", MESHING_THREADS_COUNT);
+        let threads_count = get_threads_count(&data.read().unwrap().physical_device);
+        info!("Starting {} meshing threads", threads_count);
 
-        for i in 0..MESHING_THREADS_COUNT {
+        for i in 0..threads_count {
             let mut name = "Meshing Thread ".to_string();
             name.push_str(i.to_string().as_str());
 
@@ -99,7 +116,7 @@ impl MeshingThreadPool {
     ) {
         profiling::register_thread!();
         trace!("{} started", thread::current().name().unwrap());
-        let (staging_buffer, queue_index, queue) = {
+        let (staging_buffer, queue_family, queue) = {
             let data = renderer_data.read().unwrap();
             let staging_buffer = Buffer::create(
                 &data,
@@ -109,16 +126,21 @@ impl MeshingThreadPool {
             )
             .unwrap();
 
-            let indices =
-                QueueFamilyIndices::get(&data.instance, data.surface, data.physical_device)
-                    .unwrap();
-            let queue = data.device.as_ref().get_device_queue(indices.transfer, i);
+            let queue_def = renderer_data
+                .read()
+                .unwrap()
+                .physical_device
+                .transfer_queues[i as usize];
+            let queue = data
+                .device
+                .as_ref()
+                .get_device_queue(queue_def.family, queue_def.index);
 
-            (staging_buffer, indices.transfer, queue)
+            (staging_buffer, queue_def.family, queue)
         };
 
         let command_pool =
-            CommandPool::create(&renderer_data.read().unwrap(), queue_index).unwrap();
+            CommandPool::create(&renderer_data.read().unwrap(), queue_family).unwrap();
         let mut command_buffer = command_pool
             .allocate_command_buffers(&renderer_data.read().unwrap().device, 1)
             .unwrap()[0];

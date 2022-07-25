@@ -37,7 +37,7 @@ unsafe fn get_supported_format(
         .find(|f| {
             let properties = data
                 .instance
-                .get_physical_device_format_properties(data.physical_device, *f);
+                .get_physical_device_format_properties(data.physical_device.device, *f);
 
             match tiling {
                 vk::ImageTiling::LINEAR => properties.linear_tiling_features.contains(features),

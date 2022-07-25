@@ -7,7 +7,7 @@ use vulkanalia::{
 };
 use winit::window::Window;
 
-use super::{images::create_image_view, queue::QueueFamilyIndices, renderer::RendererData};
+use super::{images::create_image_view, renderer::RendererData};
 
 pub struct SwapchainSupport {
     pub capabilities: vk::SurfaceCapabilitiesKHR,
@@ -84,8 +84,7 @@ pub struct Swapchain {
 
 impl Swapchain {
     pub unsafe fn create(window: &Window, data: &RendererData) -> Result<Self> {
-        let indices = QueueFamilyIndices::get(&data.instance, data.surface, data.physical_device)?;
-        let support = SwapchainSupport::get(&data.instance, data.surface, data.physical_device)?;
+        let support = SwapchainSupport::get(&data.instance, data.surface, data.physical_device.device)?;
 
         let surface_format = get_swapchain_surface_format(&support.formats);
         let present_mode = get_swapchain_present_mode(&support.present_modes);
@@ -99,9 +98,9 @@ impl Swapchain {
         }
 
         let mut queue_family_indices = vec![];
-        let image_sharing_mode = if indices.graphics != indices.present {
-            queue_family_indices.push(indices.graphics);
-            queue_family_indices.push(indices.present);
+        let image_sharing_mode = if data.physical_device.graphics_queue.family != data.physical_device.present_queue.family {
+            queue_family_indices.push(data.physical_device.graphics_queue.family);
+            queue_family_indices.push(data.physical_device.present_queue.family);
             vk::SharingMode::CONCURRENT
         } else {
             vk::SharingMode::EXCLUSIVE

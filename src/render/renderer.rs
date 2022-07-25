@@ -23,9 +23,8 @@ use super::{
     framebuffers::Framebuffers,
     instance,
     memory::Allocator,
-    physical_device,
+    physical_device::PhysicalDevice,
     pipeline::Pipeline,
-    queue::QueueFamilyIndices,
     swapchain::Swapchain,
     sync,
     uniforms::Uniforms,
@@ -49,12 +48,12 @@ impl Renderer {
     pub unsafe fn new(window: &Window, entry: &Entry) -> Self {
         let (instance, messenger) = instance::create(window, entry).unwrap();
         let surface = vulkanalia::window::create_surface(&instance, window).unwrap();
-        let physical_device = physical_device::pick(&instance, surface).unwrap();
+        let physical_device = PhysicalDevice::pick(&instance, surface).unwrap();
         let (device, graphics_queue, present_queue) =
-            device::create(&instance, surface, physical_device).unwrap();
+            device::create(&instance, &physical_device).unwrap();
         let device = Arc::new(device);
 
-        let allocator = Arc::new(Allocator::new(&device, &instance, physical_device));
+        let allocator = Arc::new(Allocator::new(&device, &instance, physical_device.device));
 
         let mut data = RendererData::new(
             instance,
@@ -72,15 +71,8 @@ impl Renderer {
         data.depth_buffer = Some(DepthBuffer::create(&data).unwrap());
         data.pipeline = Some(Pipeline::create(&data).unwrap());
         data.framebuffers = Some(Framebuffers::create(&data).unwrap());
-        data.command_pool = Some(
-            CommandPool::create(
-                &data,
-                QueueFamilyIndices::get(&data.instance, surface, physical_device)
-                    .unwrap()
-                    .graphics,
-            )
-            .unwrap(),
-        );
+        data.command_pool =
+            Some(CommandPool::create(&data, data.physical_device.graphics_queue.family).unwrap());
         data.command_buffers = data
             .command_pool
             .as_mut()
@@ -419,7 +411,7 @@ pub struct RendererData {
     pub instance: Instance,
     pub messenger: Option<vk::DebugUtilsMessengerEXT>,
     pub surface: vk::SurfaceKHR,
-    pub physical_device: vk::PhysicalDevice,
+    pub physical_device: PhysicalDevice,
     pub device: Arc<Device>,
     pub graphics_queue: vk::Queue,
     pub present_queue: vk::Queue,
@@ -442,7 +434,7 @@ impl RendererData {
         instance: Instance,
         messenger: Option<vk::DebugUtilsMessengerEXT>,
         surface: vk::SurfaceKHR,
-        physical_device: vk::PhysicalDevice,
+        physical_device: PhysicalDevice,
         device: Arc<Device>,
         graphics_queue: vk::Queue,
         present_queue: vk::Queue,

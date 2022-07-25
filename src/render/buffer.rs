@@ -33,8 +33,7 @@ impl Buffer {
         let info = vk::BufferCreateInfo::builder()
             .size(size as u64)
             .usage(buffer_usage)
-            .sharing_mode(vk::SharingMode::CONCURRENT)
-            .queue_family_indices(&[0, 1, 2]);
+            .sharing_mode(vk::SharingMode::EXCLUSIVE);
         let buffer = data.device.create_buffer(&info, None)?;
 
         let memory_requirements = data.device.get_buffer_memory_requirements(buffer);

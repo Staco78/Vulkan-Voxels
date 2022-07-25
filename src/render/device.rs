@@ -1,43 +1,55 @@
 use anyhow::Result;
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::sync::Arc;
 use vulkanalia::vk::{DeviceV1_0, HasBuilder};
 use vulkanalia::{vk, Device, Instance};
 
 use crate::config::{DEVICE_EXTENSIONS, VALIDATION_ENABLED, VALIDATION_LAYER};
-use crate::threads::MESHING_THREADS_COUNT;
+use crate::render::physical_device::QueueDef;
 
-use super::queue::QueueFamilyIndices;
+use super::physical_device::PhysicalDevice;
 
 pub unsafe fn create(
     instance: &Instance,
-    surface: vk::SurfaceKHR,
-    physical_device: vk::PhysicalDevice,
+    physical_device: &PhysicalDevice,
 ) -> Result<(vulkanalia::Device, vk::Queue, vk::Queue)> {
-    let indices = QueueFamilyIndices::get(instance, surface, physical_device)?;
+    let mut queues = HashMap::new();
+    let mut max_family = 0;
+    let mut insert = |queue: &QueueDef| {
+        if queue.family > max_family {
+            max_family = queue.family;
+        }
+        if let Some(value) = queues.get_mut(&queue.family) {
+            if queue.index > *value {
+                *value = queue.index;
+            }
+        } else {
+            queues.insert(queue.family, queue.index);
+        }
+    };
+    insert(&physical_device.graphics_queue);
+    insert(&physical_device.present_queue);
 
-    let mut unique_indices = HashSet::new();
-    unique_indices.insert(indices.graphics);
-    unique_indices.insert(indices.present);
+    for queue in &physical_device.transfer_queues {
+        insert(queue);
+    }
 
-    assert!(indices.transfer != indices.graphics);
-    assert!(indices.transfer != indices.present);
+    let mut priorities = vec![Vec::new(); max_family as usize + 1];
+    for i in 0..=max_family {
+        if let Some(queue_count) = queues.get(&i) {
+            // +1 because we store the max index and vulkan want the count
+            priorities[i as usize].resize(*queue_count as usize + 1, 1.0);
+        }
+    }
 
-    let queue_priorities = &[1.0];
-    let mut queue_infos = unique_indices
+    let queue_infos: Vec<_> = queues
         .iter()
         .map(|i| {
             vk::DeviceQueueCreateInfo::builder()
-                .queue_family_index(*i)
-                .queue_priorities(queue_priorities)
+                .queue_family_index(*i.0)
+                .queue_priorities(&priorities[*i.0 as usize])
         })
-        .collect::<Vec<_>>();
-
-    queue_infos.push(
-        vk::DeviceQueueCreateInfo::builder()
-            .queue_family_index(indices.transfer)
-            .queue_priorities(&[1.0; MESHING_THREADS_COUNT]),
-    );
+        .collect();
 
     let layers = if VALIDATION_ENABLED {
         vec![VALIDATION_LAYER.as_ptr()]
@@ -58,10 +70,16 @@ pub unsafe fn create(
         .enabled_features(&features)
         .enabled_extension_names(&extensions);
 
-    let device = instance.create_device(physical_device, &info, None)?;
+    let device = instance.create_device(physical_device.device, &info, None)?;
 
-    let graphics_queue = device.get_device_queue(indices.graphics, 0);
-    let present_queue = device.get_device_queue(indices.present, 0);
+    let graphics_queue = device.get_device_queue(
+        physical_device.graphics_queue.family,
+        physical_device.graphics_queue.index,
+    );
+    let present_queue = device.get_device_queue(
+        physical_device.present_queue.family,
+        physical_device.present_queue.index,
+    );
 
     Ok((device, graphics_queue, present_queue))
 }

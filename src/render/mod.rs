@@ -9,7 +9,6 @@ pub mod instance;
 pub mod memory;
 pub mod physical_device;
 pub mod pipeline;
-pub mod queue;
 pub mod renderer;
 pub mod swapchain;
 pub mod sync;
