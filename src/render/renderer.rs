@@ -13,7 +13,7 @@ use vulkanalia::{
 };
 use winit::window::Window;
 
-use crate::{config::MAX_FRAMES_IN_FLIGHT, inputs::Inputs, world::Chunk};
+use crate::{config::MAX_FRAMES_IN_FLIGHT, inputs::Inputs, world::Chunk, render::vertex::Vertex};
 
 use super::{
     camera::Camera,
@@ -202,15 +202,30 @@ impl Renderer {
                     command_buffer.buffer,
                     0,
                     &[chunk
-                        .vertex_buffer
+                        .buffer
                         .as_ref()
                         .expect("Chunk not meshed")
                         .buffer],
                     &[0],
                 );
-
-                data.device
-                    .cmd_draw(command_buffer.buffer, chunk.vertices_len as u32, 1, 0, 0);
+                data.device.cmd_bind_index_buffer(
+                    command_buffer.buffer,
+                    chunk
+                        .buffer
+                        .as_ref()
+                        .expect("Chunk not meshed")
+                        .buffer,
+                    (chunk.vertices_count * std::mem::size_of::<Vertex>()) as u64,
+                    vk::IndexType::UINT32,
+                );
+                data.device.cmd_draw_indexed(
+                    command_buffer.buffer,
+                    chunk.indices_count as u32,
+                    1,
+                    0,
+                    0,
+                    0,
+                );
             } else {
                 to_remove.push(i);
             }

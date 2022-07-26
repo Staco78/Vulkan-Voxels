@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     mem::size_of,
     num::NonZeroUsize,
     sync::{
@@ -21,8 +22,10 @@ use crate::{
     world::Chunk,
 };
 
-pub const STAGING_BUFFER_SIZE: usize =
-    ((CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE) as usize * size_of::<Vertex>() * 36) / 2;
+pub const STAGING_BUFFER_SIZE_VERTICES: usize =
+    ((CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE) as usize * size_of::<Vertex>() * 36) / 5;
+pub const STAGING_BUFFER_SIZE_INDICES: usize =
+    ((CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE) as usize * 36) * 2;
 
 #[inline]
 fn get_threads_count(physical_device: &PhysicalDevice) -> usize {
@@ -120,7 +123,7 @@ impl MeshingThreadPool {
             let data = renderer_data.read().unwrap();
             let staging_buffer = Buffer::create(
                 &data,
-                STAGING_BUFFER_SIZE,
+                STAGING_BUFFER_SIZE_VERTICES + STAGING_BUFFER_SIZE_INDICES,
                 vk::BufferUsageFlags::TRANSFER_SRC,
                 AllocUsage::Staging,
             )
@@ -149,6 +152,7 @@ impl MeshingThreadPool {
             if exit.load(Ordering::Relaxed) {
                 break;
             }
+            let mut hash_map = HashMap::new();
             let recv_chunk = receiver.recv().unwrap();
             if let Some(chunk) = recv_chunk.upgrade() {
                 {
@@ -156,8 +160,20 @@ impl MeshingThreadPool {
                     {
                         profiling::scope!("meshing");
                         chunk
-                            .mesh(&renderer_data.read().unwrap(), &staging_buffer)
+                            .mesh(
+                                &renderer_data.read().unwrap(),
+                                std::slice::from_raw_parts_mut(
+                                    staging_buffer.ptr.cast(),
+                                    STAGING_BUFFER_SIZE_VERTICES,
+                                ),
+                                std::slice::from_raw_parts_mut(
+                                    staging_buffer.ptr.add(STAGING_BUFFER_SIZE_VERTICES).cast(),
+                                    STAGING_BUFFER_SIZE_INDICES,
+                                ),
+                                &mut hash_map,
+                            )
                             .unwrap();
+                        hash_map.clear();
                     }
 
                     {
@@ -166,14 +182,27 @@ impl MeshingThreadPool {
                         {
                             profiling::scope!("recording");
                             command_buffer.begin(device).unwrap();
-                            let regions = vk::BufferCopy::builder()
-                                .size((chunk.vertices_len * std::mem::size_of::<Vertex>()) as u64);
+                            let regions = [
+                                vk::BufferCopy::builder().size(
+                                    (chunk.vertices_count * std::mem::size_of::<Vertex>()) as u64,
+                                ),
+                                vk::BufferCopy::builder()
+                                    .src_offset(STAGING_BUFFER_SIZE_VERTICES as u64)
+                                    .dst_offset(
+                                        (chunk.vertices_count * std::mem::size_of::<Vertex>())
+                                            as u64,
+                                    )
+                                    .size(
+                                        (chunk.indices_count * std::mem::size_of::<u32>()) as u64,
+                                    ),
+                            ];
                             device.cmd_copy_buffer(
                                 command_buffer.buffer,
                                 staging_buffer.buffer,
-                                chunk.vertex_buffer.as_ref().unwrap().buffer,
-                                &[regions],
+                                chunk.buffer.as_ref().unwrap().buffer,
+                                &regions,
                             );
+
                             command_buffer.end(device).unwrap();
                         }
 

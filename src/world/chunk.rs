@@ -1,4 +1,4 @@
-use std::{fmt::Debug, mem::size_of};
+use std::{collections::HashMap, fmt::Debug, mem::size_of};
 
 use anyhow::Result;
 use log::trace;
@@ -20,20 +20,9 @@ pub struct Block {
 pub struct Chunk {
     pub pos: ChunkPos,
     pub blocks: [Block; CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE],
-    pub vertex_buffer: Option<Buffer>,
-    pub vertices: Vec<Vertex>,
-    pub vertices_len: usize,
-}
-
-impl Debug for Chunk {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Chunk")
-            .field("pos", &self.pos)
-            .field("vertex_buffer", &self.vertex_buffer)
-            .field("vertices", &self.vertices)
-            .field("vertices_len", &self.vertices_len)
-            .finish()
-    }
+    pub buffer: Option<Buffer>,
+    pub vertices_count: usize,
+    pub indices_count: usize,
 }
 
 impl Chunk {
@@ -42,9 +31,9 @@ impl Chunk {
         let mut c = Self {
             pos,
             blocks: [Block { id: 0 }; CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE],
-            vertex_buffer: None,
-            vertices: Vec::new(),
-            vertices_len: 0,
+            buffer: None,
+            vertices_count: 0,
+            indices_count: 0,
         };
 
         for x in 0..CHUNK_SIZE {
@@ -54,6 +43,10 @@ impl Chunk {
                 for y in 0..height {
                     c.blocks[x * CHUNK_SIZE * CHUNK_SIZE + y * CHUNK_SIZE + z].id = 1;
                 }
+                // for y in 0..CHUNK_SIZE {
+                //     c.blocks[x * CHUNK_SIZE * CHUNK_SIZE + y * CHUNK_SIZE + z].id =
+                //         ((x + y + z) % 2) as u16;
+                // }
             }
         }
 
@@ -62,7 +55,13 @@ impl Chunk {
         Ok(c)
     }
 
-    pub unsafe fn mesh(&mut self, renderer_data: &RendererData, buffer: &Buffer) -> Result<()> {
+    pub unsafe fn mesh(
+        &mut self,
+        renderer_data: &RendererData,
+        vertices: &mut [Vertex],
+        indices: &mut [u32],
+        hash_map: &mut HashMap<Vertex, u32>,
+    ) -> Result<()> {
         trace!("Mesh chunk {:?}", self.pos);
 
         const FRONT: [[i32; 3]; 6] = [
@@ -114,28 +113,27 @@ impl Chunk {
             [1, 0, 1],
         ];
 
-        #[inline(always)]
-        unsafe fn emit_face(
-            face: &[[i32; 3]; 6],
-            pos: TVec3<i32>,
-            light_modifier: u8,
-            data: &mut [Vertex],
-            mut i: usize,
-        ) -> usize {
+        let mut vertices_index = 0;
+        let mut indices_index = 0;
+
+        let mut emit_face = |face: &[[i32; 3]; 6], pos: TVec3<i32>, light_modifier: u8| {
             for vert in face.iter().take(6) {
                 let v = Vertex {
                     pos: pos + vec3(vert[0], vert[1], vert[2]),
-                    color: vec3(1., 1., 1.),
+                    color: vec3(255, 255, 255),
                     light_modifier,
                 };
-                data[i] = v;
-                i += 1;
+                if let Some(index) = hash_map.get(&v) {
+                    indices[indices_index] = *index;
+                } else {
+                    hash_map.insert(v, vertices_index as u32);
+                    indices[indices_index] = vertices_index as u32;
+                    vertices[vertices_index] = v;
+                    vertices_index += 1;
+                }
+                indices_index += 1;
             }
-            i
-        }
-
-        let data = std::slice::from_raw_parts_mut(buffer.ptr.cast(), buffer.alloc.size as usize);
-        let mut i = 0;
+        };
 
         for x in 0..CHUNK_SIZE {
             for y in 0..CHUNK_SIZE {
@@ -150,36 +148,39 @@ impl Chunk {
                         if x >= CHUNK_SIZE - 1
                             || self.blocks[index + CHUNK_SIZE * CHUNK_SIZE].id == 0
                         {
-                            i = emit_face(&BACK, pos, 8, data, i);
+                            emit_face(&BACK, pos, 8);
                         }
                         if x == 0 || self.blocks[index - CHUNK_SIZE * CHUNK_SIZE].id == 0 {
-                            i = emit_face(&FRONT, pos, 8, data, i);
+                            emit_face(&FRONT, pos, 8);
                         }
                         if z >= CHUNK_SIZE - 1 || self.blocks[index + 1].id == 0 {
-                            i = emit_face(&RIGHT, pos, 6, data, i);
+                            emit_face(&RIGHT, pos, 6);
                         }
                         if z == 0 || self.blocks[index - 1].id == 0 {
-                            i = emit_face(&LEFT, pos, 6, data, i);
+                            emit_face(&LEFT, pos, 6);
                         }
                         if y >= CHUNK_SIZE - 1 || self.blocks[index + CHUNK_SIZE].id == 0 {
-                            i = emit_face(&UP, pos, 10, data, i);
+                            emit_face(&UP, pos, 10);
                         }
                         if y == 0 || self.blocks[index - CHUNK_SIZE].id == 0 {
-                            i = emit_face(&DOWN, pos, 5, data, i);
+                            emit_face(&DOWN, pos, 5);
                         }
                     }
                 }
             }
         }
 
-        self.vertex_buffer = Some(Buffer::create(
+        self.buffer = Some(Buffer::create(
             renderer_data,
-            i as usize * size_of::<Vertex>(),
-            vk::BufferUsageFlags::VERTEX_BUFFER | vk::BufferUsageFlags::TRANSFER_DST,
+            vertices_index * size_of::<Vertex>() + indices_index * size_of::<u32>(),
+            vk::BufferUsageFlags::VERTEX_BUFFER
+                | vk::BufferUsageFlags::INDEX_BUFFER
+                | vk::BufferUsageFlags::TRANSFER_DST,
             AllocUsage::DeviceLocal,
         )?);
 
-        self.vertices_len = i as usize;
+        self.vertices_count = vertices_index;
+        self.indices_count = indices_index;
 
         Ok(())
     }
