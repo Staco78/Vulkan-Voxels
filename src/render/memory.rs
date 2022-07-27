@@ -52,6 +52,7 @@ impl Allocator {
         instance: &Instance,
         physical_device: vk::PhysicalDevice,
     ) -> Self {
+        trace!("Allocator::new");
         let memory_properties = instance.get_physical_device_memory_properties(physical_device);
         let mut pools = Vec::with_capacity(memory_properties.memory_type_count as usize);
         for i in 0..memory_properties.memory_type_count {

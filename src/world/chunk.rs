@@ -1,13 +1,12 @@
-use std::{collections::HashMap, fmt::Debug, mem::size_of};
+use std::{collections::HashMap, fmt::Debug};
 
 use anyhow::Result;
 use log::trace;
 use nalgebra_glm::{vec3, TVec3};
-use vulkanalia::vk;
 
 use crate::{
     config::CHUNK_SIZE,
-    render::{buffer::Buffer, memory::AllocUsage, renderer::RendererData, vertex::Vertex},
+    render::{buffer::Buffer, vertex::Vertex},
 };
 
 use super::world::ChunkPos;
@@ -55,9 +54,8 @@ impl Chunk {
         Ok(c)
     }
 
-    pub unsafe fn mesh(
+    pub fn mesh(
         &mut self,
-        renderer_data: &RendererData,
         vertices: &mut [Vertex],
         indices: &mut [u32],
         hash_map: &mut HashMap<Vertex, u32>,
@@ -169,15 +167,6 @@ impl Chunk {
                 }
             }
         }
-
-        self.buffer = Some(Buffer::create(
-            renderer_data,
-            vertices_index * size_of::<Vertex>() + indices_index * size_of::<u32>(),
-            vk::BufferUsageFlags::VERTEX_BUFFER
-                | vk::BufferUsageFlags::INDEX_BUFFER
-                | vk::BufferUsageFlags::TRANSFER_DST,
-            AllocUsage::DeviceLocal,
-        )?);
 
         self.vertices_count = vertices_index;
         self.indices_count = indices_index;

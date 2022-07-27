@@ -161,7 +161,6 @@ impl MeshingThreadPool {
                         profiling::scope!("meshing");
                         chunk
                             .mesh(
-                                &renderer_data.read().unwrap(),
                                 std::slice::from_raw_parts_mut(
                                     staging_buffer.ptr.cast(),
                                     STAGING_BUFFER_SIZE_VERTICES,
@@ -173,6 +172,15 @@ impl MeshingThreadPool {
                                 &mut hash_map,
                             )
                             .unwrap();
+                        chunk.buffer = Some(Buffer::create(
+                            &renderer_data.read().unwrap(),
+                            chunk.vertices_count * size_of::<Vertex>()
+                                + chunk.indices_count * size_of::<u32>(),
+                            vk::BufferUsageFlags::VERTEX_BUFFER
+                                | vk::BufferUsageFlags::INDEX_BUFFER
+                                | vk::BufferUsageFlags::TRANSFER_DST,
+                            AllocUsage::DeviceLocal,
+                        ).unwrap());
                         hash_map.clear();
                     }
 

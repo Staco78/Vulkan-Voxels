@@ -398,6 +398,7 @@ impl Renderer {
 
 impl Drop for Renderer {
     fn drop(&mut self) {
+        trace!("Dropping renderer");
         unsafe {
             let mut data = self.data.write().unwrap();
             data.device.device_wait_idle().unwrap();
