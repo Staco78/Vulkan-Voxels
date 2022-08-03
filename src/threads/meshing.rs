@@ -1,5 +1,4 @@
 use std::{
-    collections::HashMap,
     mem::size_of,
     num::NonZeroUsize,
     sync::{
@@ -152,7 +151,6 @@ impl MeshingThreadPool {
             if exit.load(Ordering::Relaxed) {
                 break;
             }
-            let mut hash_map = HashMap::new();
             let recv_chunk = receiver.recv().unwrap();
             if let Some(chunk) = recv_chunk.upgrade() {
                 {
@@ -169,7 +167,6 @@ impl MeshingThreadPool {
                                     staging_buffer.ptr.add(STAGING_BUFFER_SIZE_VERTICES).cast(),
                                     STAGING_BUFFER_SIZE_INDICES,
                                 ),
-                                &mut hash_map,
                             )
                             .unwrap();
                         chunk.buffer = Some(Buffer::create(
@@ -181,7 +178,6 @@ impl MeshingThreadPool {
                                 | vk::BufferUsageFlags::TRANSFER_DST,
                             AllocUsage::DeviceLocal,
                         ).unwrap());
-                        hash_map.clear();
                     }
 
                     {

@@ -1,6 +1,5 @@
 use std::{
     alloc::{dealloc, Layout},
-    collections::HashMap,
     sync::{Arc, Mutex},
 };
 
@@ -56,13 +55,11 @@ fn chunk_bench(c: &mut Criterion) {
         let layout = Layout::new::<[Vertex; 22000]>();
         let buff1 = alloc(layout);
         let buff2 = alloc(layout);
-        let mut hash_map = HashMap::new();
         b.iter(|| {
             chunk
                 .mesh(
                     std::slice::from_raw_parts_mut(buff1.cast(), 22000),
                     std::slice::from_raw_parts_mut(buff2.cast(), 22000),
-                    &mut hash_map,
                 )
                 .unwrap();
         });
