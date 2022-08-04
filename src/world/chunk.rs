@@ -63,36 +63,6 @@ impl Chunk {
         let mut indices_index = 0;
         let mut indices_max = 0;
 
-        let mut emit_quad = |corners: &[TVec3<i32>; 4], side: Side| {
-            let color: TVec3<u8> = vec3(255, 255, 255);
-            let light_modifier = match side {
-                Side::NORTH | Side::SOUTH => 8,
-                Side::WEST | Side::EAST => 6,
-                Side::TOP => 10,
-                Side::BOTTOM => 5,
-            };
-
-            for i in 0..4 {
-                vertices[vertices_index] = Vertex {
-                    pos: corners[i]
-                        + vec3(
-                            self.pos.x * CHUNK_SIZE as i32,
-                            self.pos.y as i32 * CHUNK_SIZE as i32,
-                            self.pos.z * CHUNK_SIZE as i32,
-                        ),
-                    color,
-                    light_modifier,
-                };
-                vertices_index += 1;
-            }
-
-            [0, 1, 2, 2, 3, 0].iter().for_each(|i| {
-                indices[indices_index] = indices_max + *i as u32;
-                indices_index += 1;
-            });
-            indices_max += 4;
-        };
-
         #[derive(Debug, Clone, Copy)]
         enum MaskValue<'a> {
             None,
@@ -119,6 +89,7 @@ impl Chunk {
         }
 
         impl PartialEq for MaskValue<'_> {
+            #[inline]
             fn eq(&self, other: &Self) -> bool {
                 match (self, other) {
                     (Self::None, Self::None) => true,
@@ -244,8 +215,17 @@ impl Chunk {
                                 dv[u] = width as i32;
                             }
 
-                            emit_quad(
-                                &[
+                            // emit quad
+                            {
+                                let color: TVec3<u8> = vec3(255, 255, 255);
+                                let light_modifier = match side {
+                                    Side::NORTH | Side::SOUTH => 8,
+                                    Side::WEST | Side::EAST => 6,
+                                    Side::TOP => 10,
+                                    Side::BOTTOM => 5,
+                                };
+
+                                for corner in [
                                     vec3(x[0], x[1], x[2]),
                                     vec3(x[0] + du[0], x[1] + du[1], x[2] + du[2]),
                                     vec3(
@@ -254,9 +234,26 @@ impl Chunk {
                                         x[2] + du[2] + dv[2],
                                     ),
                                     vec3(x[0] + dv[0], x[1] + dv[1], x[2] + dv[2]),
-                                ],
-                                side,
-                            );
+                                ] {
+                                    vertices[vertices_index] = Vertex {
+                                        pos: corner
+                                            + vec3(
+                                                self.pos.x * CHUNK_SIZE as i32,
+                                                self.pos.y as i32 * CHUNK_SIZE as i32,
+                                                self.pos.z * CHUNK_SIZE as i32,
+                                            ),
+                                        color,
+                                        light_modifier,
+                                    };
+                                    vertices_index += 1;
+                                }
+
+                                [0, 1, 2, 2, 3, 0].iter().for_each(|i| {
+                                    indices[indices_index] = indices_max + *i as u32;
+                                    indices_index += 1;
+                                });
+                                indices_max += 4;
+                            }
 
                             for l in 0..height {
                                 for k in 0..width {
@@ -281,7 +278,7 @@ impl Chunk {
         Ok(())
     }
 
-    #[inline(always)]
+    #[inline]
     fn block_pos_to_index(x: u32, y: u32, z: u32) -> usize {
         (x as usize) * CHUNK_SIZE * CHUNK_SIZE + (y as usize) * CHUNK_SIZE + (z as usize)
     }
@@ -328,6 +325,7 @@ enum Side {
 impl TryFrom<usize> for Side {
     type Error = anyhow::Error;
 
+    #[inline(always)]
     fn try_from(value: usize) -> Result<Self, Self::Error> {
         match value {
             0 => Ok(Side::NORTH),
